@@ -144,3 +144,340 @@
 
   .result-meta {
     font-size: 0.78rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .result-meta .resume-hint {
+    color: var(--accent);
+    margin-left: 0.4em;
+  }
+
+  .stream-btn {
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 0.95rem;
+    letter-spacing: 0.08em;
+    padding: 0.4rem 1rem;
+    border-radius: 3px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.2s, color 0.2s;
+    flex-shrink: 0;
+  }
+
+  .stream-btn:hover { background: var(--accent); color: #fff; }
+
+  /* Episode picker — only shown for TV */
+  .ep-picker {
+    background: var(--surface2);
+    border-top: 1px solid var(--border);
+    padding: 0.75rem 1rem;
+    display: none;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .ep-picker.visible { display: flex; }
+
+  .ep-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .ep-label {
+    font-size: 0.78rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+  }
+
+  .ep-inputs {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex: 1;
+  }
+
+  .ep-input-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.2rem;
+  }
+
+  .ep-input-wrap span {
+    font-size: 0.68rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  input[type="number"] {
+    width: 56px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.95rem;
+    padding: 0.35rem 0.5rem;
+    border-radius: 3px;
+    outline: none;
+    text-align: center;
+    transition: border-color 0.2s;
+    -moz-appearance: textfield;
+  }
+
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
+
+  input[type="number"]:focus { border-color: var(--accent); }
+
+  .ep-go-btn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 0.95rem;
+    letter-spacing: 0.08em;
+    padding: 0.4rem 1rem;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: opacity 0.2s;
+    white-space: nowrap;
+  }
+
+  .ep-go-btn:hover { opacity: 0.85; }
+
+  #status {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-top: 0.5rem;
+    min-height: 1.2em;
+  }
+</style>
+</head>
+<body>
+
+<h1>VID<span>SEARCH</span></h1>
+<p class="subtitle">Find it. Watch it.</p>
+
+<div class="search-row">
+  <input type="text" id="query" placeholder="Film or show name..." autofocus>
+  <button id="searchBtn">Search</button>
+</div>
+
+<div id="status"></div>
+<div id="results"></div>
+
+<script>
+  // ============================================
+  // TMDB API KEY
+  // ============================================
+  const TMDB_API_KEY = '9c2f0a71e20cf0f5c14709ed2d1ec9e0';
+
+  // ============================================
+  // STREAMING URL BASE — edit this line if the site moves
+  // Movies:  STREAM_MOVIE + imdb_id
+  // TV:      STREAM_TV    + imdb_id + /season/episode
+  // ============================================
+  const STREAM_MOVIE = 'https://vidsrc.sh/embed/movie/';
+  const STREAM_TV    = 'https://vidsrc.sh/embed/tv/';
+
+  const queryInput = document.getElementById('query');
+  const searchBtn  = document.getElementById('searchBtn');
+  const resultsDiv = document.getElementById('results');
+  const statusDiv  = document.getElementById('status');
+
+  // ── Progress memory (localStorage) ──────────────────────────
+  function getProgress(imdbId) {
+    try {
+      const raw = localStorage.getItem('vs_progress_' + imdbId);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  }
+
+  function saveProgress(imdbId, season, episode) {
+    try {
+      localStorage.setItem('vs_progress_' + imdbId, JSON.stringify({ season, episode }));
+    } catch {}
+  }
+
+  // ── Search ───────────────────────────────────────────────────
+  searchBtn.addEventListener('click', doSearch);
+  queryInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+
+  async function doSearch() {
+    const query = queryInput.value.trim();
+    if (!query) return;
+
+    resultsDiv.innerHTML = '';
+    statusDiv.textContent = 'Searching...';
+
+    try {
+      const res = await fetch(
+        `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&page=1`
+      );
+      const data = await res.json();
+
+      const results = (data.results || [])
+        .filter(r => r.media_type === 'movie' || r.media_type === 'tv')
+        .slice(0, 5);
+
+      if (results.length === 0) {
+        statusDiv.textContent = 'No results found.';
+        return;
+      }
+
+      statusDiv.textContent = `${results.length} result${results.length > 1 ? 's' : ''} — pick one:`;
+      results.forEach(item => renderCard(item));
+
+    } catch (err) {
+      statusDiv.textContent = 'Something went wrong. Check your connection.';
+    }
+  }
+
+  // ── Render card ──────────────────────────────────────────────
+  function renderCard(item) {
+    const isMovie = item.media_type === 'movie';
+    const title   = isMovie ? item.title : item.name;
+    const year    = isMovie
+      ? (item.release_date || '').slice(0, 4)
+      : (item.first_air_date || '').slice(0, 4);
+    const type    = isMovie ? 'Movie' : 'TV Series';
+    const poster  = item.poster_path
+      ? `<img class="result-poster" src="https://image.tmdb.org/t/p/w92${item.poster_path}" alt="${title}">`
+      : `<div class="no-poster">🎬</div>`;
+
+    const card = document.createElement('div');
+    card.className = 'result-card';
+
+    card.innerHTML = `
+      <div class="card-main">
+        ${poster}
+        <div class="result-info">
+          <div class="result-title">${title}</div>
+          <div class="result-meta">${type}${year ? ' · ' + year : ''}<span class="resume-hint"></span></div>
+        </div>
+        <button class="stream-btn">Stream</button>
+      </div>
+      ${!isMovie ? `
+      <div class="ep-picker">
+        <div class="ep-row">
+          <span class="ep-label">Episode</span>
+          <div class="ep-inputs">
+            <div class="ep-input-wrap">
+              <input type="number" class="season-input" value="1" min="1">
+              <span>Season</span>
+            </div>
+            <div class="ep-input-wrap">
+              <input type="number" class="episode-input" value="1" min="1">
+              <span>Episode</span>
+            </div>
+          </div>
+          <button class="ep-go-btn">Go</button>
+        </div>
+      </div>` : ''}
+    `;
+
+    const streamBtn = card.querySelector('.stream-btn');
+    const epPicker  = card.querySelector('.ep-picker');
+
+    if (isMovie) {
+      streamBtn.addEventListener('click', () => openStream(item, true, null, null, title));
+    } else {
+      const sInput = card.querySelector('.season-input');
+      const eInput = card.querySelector('.episode-input');
+      const goBtn  = card.querySelector('.ep-go-btn');
+      let cachedImdbId = null;
+
+      // Fetch IMDB ID early — populate saved progress when ready
+      fetchImdbId(item.id, false).then(imdbId => {
+        if (!imdbId) return;
+        cachedImdbId = imdbId;
+
+        const saved = getProgress(imdbId);
+        if (saved) {
+          sInput.value = saved.season;
+          eInput.value = saved.episode;
+          const hint = card.querySelector('.resume-hint');
+          hint.textContent = `· S${saved.season}E${saved.episode} saved`;
+        }
+      });
+
+      // Single stream button listener — shows picker and streams
+      streamBtn.addEventListener('click', () => {
+        epPicker.classList.add('visible');
+        const s = parseInt(sInput.value) || 1;
+        const e = parseInt(eInput.value) || 1;
+        if (!cachedImdbId) {
+          statusDiv.textContent = 'Still loading, try again in a second...';
+          return;
+        }
+        openStream(item, false, s, e, title, cachedImdbId);
+      });
+
+      // Go button — change episode without re-clicking Stream
+      goBtn.addEventListener('click', () => {
+        const s = parseInt(sInput.value) || 1;
+        const e = parseInt(eInput.value) || 1;
+        if (!cachedImdbId) {
+          statusDiv.textContent = 'Still loading, try again in a second...';
+          return;
+        }
+        openStream(item, false, s, e, title, cachedImdbId);
+      });
+    }
+
+    resultsDiv.appendChild(card);
+  }
+
+  // ── Fetch IMDB ID ────────────────────────────────────────────
+  async function fetchImdbId(tmdbId, isMovie) {
+    const endpoint = isMovie
+      ? `https://api.themoviedb.org/3/movie/${tmdbId}/external_ids?api_key=${TMDB_API_KEY}`
+      : `https://api.themoviedb.org/3/tv/${tmdbId}/external_ids?api_key=${TMDB_API_KEY}`;
+    const res  = await fetch(endpoint);
+    const data = await res.json();
+    return data.imdb_id || null;
+  }
+
+  // ── Open stream ──────────────────────────────────────────────
+  async function openStream(item, isMovie, season, episode, title, cachedImdbId) {
+    statusDiv.textContent = 'Loading...';
+
+    try {
+      const imdbId = cachedImdbId || await fetchImdbId(item.id, isMovie);
+
+      if (!imdbId) {
+        statusDiv.textContent = 'No IMDB ID found for this title.';
+        return;
+      }
+
+      let url;
+      if (isMovie) {
+        url = STREAM_MOVIE + imdbId;
+      } else {
+        url = `${STREAM_TV}${imdbId}/${season}/${episode}`;
+        saveProgress(imdbId, season, episode);
+      }
+
+      statusDiv.textContent = '';
+
+      // Named tab per title so re-opening same show reuses the tab
+      const tabName = 'vs_' + title.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '');
+      window.open(url, tabName);
+
+    } catch (err) {
+      statusDiv.textContent = 'Failed to open stream. Try again.';
+    }
+  }
+</script>
+</body>
+</html>
