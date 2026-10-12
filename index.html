@@ -283,12 +283,34 @@
   const TMDB_API_KEY = '9c2f0a71e20cf0f5c14709ed2d1ec9e0';
 
   // ============================================
-  // STREAMING URL BASE — edit this line if the site moves
-  // Movies:  STREAM_MOVIE + imdb_id
-  // TV:      STREAM_TV    + imdb_id + /season/episode
+  // STREAMING URL BASE
+  // Domain is auto-fetched from vidsrc.domains on each page load.
+  // Falls back to vidsrc.sh if that fetch fails or is blocked.
+  // If the path format ever changes, update /embed/movie/ and /embed/tv/ below.
   // ============================================
-  const STREAM_MOVIE = 'https://vidsrc.sh/embed/movie/';
-  const STREAM_TV    = 'https://vidsrc.sh/embed/tv/';
+  let STREAM_MOVIE = 'https://vidsrc.sh/embed/movie/';
+  let STREAM_TV    = 'https://vidsrc.sh/embed/tv/';
+
+  // Resolves when domain check is done (or failed) — openStream waits on this
+  const domainReady = (async function autoUpdateDomain() {
+    try {
+      const res = await Promise.race([
+        fetch('https://vidsrc.domains/'),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000))
+      ]);
+      const html = await res.text();
+      // Look for the PRIMARY domain — try both orderings in the markup
+      const match = html.match(/([a-z0-9][-a-z0-9]*\.[a-z]{2,6})[^<]{0,80}PRIMARY/i)
+                 || html.match(/PRIMARY[^<]{0,80}?([a-z0-9][-a-z0-9]*\.[a-z]{2,6})/i);
+      if (match) {
+        const domain = match[1].toLowerCase();
+        STREAM_MOVIE = `https://${domain}/embed/movie/`;
+        STREAM_TV    = `https://${domain}/embed/tv/`;
+      }
+    } catch {
+      // CORS blocked or timeout — keep hardcoded fallback above
+    }
+  })();
 
   const queryInput = document.getElementById('query');
   const searchBtn  = document.getElementById('searchBtn');
@@ -451,6 +473,7 @@
   // ── Open stream ──────────────────────────────────────────────
   async function openStream(item, isMovie, season, episode, title, cachedImdbId) {
     statusDiv.textContent = 'Loading...';
+    await domainReady; // ensure domain check has finished before building URL
 
     try {
       const imdbId = cachedImdbId || await fetchImdbId(item.id, isMovie);
