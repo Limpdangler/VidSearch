@@ -205,39 +205,42 @@
     flex: 1;
   }
 
-  .ep-input-wrap {
+  .ep-select-wrap {
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 0.2rem;
   }
 
-  .ep-input-wrap span {
+  .ep-select-wrap span {
     font-size: 0.68rem;
     color: var(--muted);
     text-transform: uppercase;
     letter-spacing: 0.06em;
   }
 
-  input[type="number"] {
-    width: 56px;
+  select {
     background: var(--surface);
     border: 1px solid var(--border);
     color: var(--text);
     font-family: 'DM Sans', sans-serif;
-    font-size: 0.95rem;
+    font-size: 0.9rem;
     padding: 0.35rem 0.5rem;
     border-radius: 3px;
     outline: none;
-    text-align: center;
+    cursor: pointer;
     transition: border-color 0.2s;
-    -moz-appearance: textfield;
+    max-width: 120px;
   }
 
-  input[type="number"]::-webkit-outer-spin-button,
-  input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
+  select:focus { border-color: var(--accent); }
+  select option { background: var(--surface2); }
 
-  input[type="number"]:focus { border-color: var(--accent); }
+  .ep-loading {
+    font-size: 0.78rem;
+    color: var(--muted);
+    font-style: italic;
+  }
 
   .ep-go-btn {
     background: var(--accent);
@@ -394,17 +397,18 @@
         <div class="ep-row">
           <span class="ep-label">Episode</span>
           <div class="ep-inputs">
-            <div class="ep-input-wrap">
-              <input type="number" class="season-input" value="1" min="1">
+            <div class="ep-select-wrap">
+              <select class="season-select"><option>S1</option></select>
               <span>Season</span>
             </div>
-            <div class="ep-input-wrap">
-              <input type="number" class="episode-input" value="1" min="1">
+            <div class="ep-select-wrap">
+              <select class="episode-select"><option>E1</option></select>
               <span>Episode</span>
             </div>
           </div>
           <button class="ep-go-btn">Go</button>
         </div>
+        <div class="ep-loading">Loading episodes...</div>
       </div>` : ''}
     `;
 
@@ -414,46 +418,81 @@
     if (isMovie) {
       streamBtn.addEventListener('click', () => openStream(item, true, null, null, title));
     } else {
-      const sInput = card.querySelector('.season-input');
-      const eInput = card.querySelector('.episode-input');
-      const goBtn  = card.querySelector('.ep-go-btn');
-      let cachedImdbId = null;
+      const sSel      = card.querySelector('.season-select');
+      const eSel      = card.querySelector('.episode-select');
+      const goBtn     = card.querySelector('.ep-go-btn');
+      const epLoading = card.querySelector('.ep-loading');
+      let cachedImdbId  = null;
+      let seasonData    = []; // [{season_number, episode_count}]
 
-      // Fetch IMDB ID early — populate saved progress when ready
+      // Populate season dropdown and episode counts from TMDB
+      async function loadSeasons() {
+        try {
+          const res  = await fetch(`https://api.themoviedb.org/3/tv/${item.id}?api_key=${TMDB_API_KEY}`);
+          const data = await res.json();
+          seasonData = (data.seasons || []).filter(s => s.season_number > 0);
+
+          sSel.innerHTML = seasonData.map(s =>
+            `<option value="${s.season_number}">S${s.season_number}</option>`
+          ).join('');
+
+          updateEpisodes();
+          epLoading.style.display = 'none';
+        } catch {
+          epLoading.textContent = 'Could not load episode list.';
+        }
+      }
+
+      function updateEpisodes(keepEp) {
+        const sNum = parseInt(sSel.value);
+        const season = seasonData.find(s => s.season_number === sNum);
+        const count  = season ? season.episode_count : 1;
+        const current = keepEp || 1;
+        eSel.innerHTML = Array.from({ length: count }, (_, i) =>
+          `<option value="${i + 1}"${i + 1 === current ? ' selected' : ''}>E${i + 1}</option>`
+        ).join('');
+      }
+
+      sSel.addEventListener('change', () => updateEpisodes());
+
+      // Fetch IMDB ID and seasons independently — restore progress as soon as both are ready
       fetchImdbId(item.id, false).then(imdbId => {
         if (!imdbId) return;
         cachedImdbId = imdbId;
-
-        const saved = getProgress(imdbId);
-        if (saved) {
-          sInput.value = saved.season;
-          eInput.value = saved.episode;
-          const hint = card.querySelector('.resume-hint');
-          hint.textContent = `· S${saved.season}E${saved.episode} saved`;
-        }
+        tryRestoreProgress();
       });
 
-      // Single stream button listener — shows picker and streams
+      loadSeasons().then(() => {
+        tryRestoreProgress();
+      });
+
+      function tryRestoreProgress() {
+        if (!cachedImdbId || !seasonData.length) return; // wait until both are ready
+        const saved = getProgress(cachedImdbId);
+        if (!saved) return;
+        sSel.value = saved.season;
+        updateEpisodes(saved.episode);
+        const hint = card.querySelector('.resume-hint');
+        hint.textContent = `· S${saved.season}E${saved.episode} saved`;
+      }
+
+      // Stream button — show picker and stream current selection
       streamBtn.addEventListener('click', () => {
         epPicker.classList.add('visible');
-        const s = parseInt(sInput.value) || 1;
-        const e = parseInt(eInput.value) || 1;
         if (!cachedImdbId) {
           statusDiv.textContent = 'Still loading, try again in a second...';
           return;
         }
-        openStream(item, false, s, e, title, cachedImdbId);
+        openStream(item, false, parseInt(sSel.value), parseInt(eSel.value), title, cachedImdbId);
       });
 
-      // Go button — change episode without re-clicking Stream
+      // Go button — change episode
       goBtn.addEventListener('click', () => {
-        const s = parseInt(sInput.value) || 1;
-        const e = parseInt(eInput.value) || 1;
         if (!cachedImdbId) {
           statusDiv.textContent = 'Still loading, try again in a second...';
           return;
         }
-        openStream(item, false, s, e, title, cachedImdbId);
+        openStream(item, false, parseInt(sSel.value), parseInt(eSel.value), title, cachedImdbId);
       });
     }
 
