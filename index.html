@@ -6,13 +6,11 @@
 <title>Vid Search</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
-  /* ============================================
-     STREAMING URL BASE — change this if the site moves
-     ============================================ */
   :root {
     --accent: #e5383b;
     --bg: #0a0a0a;
     --surface: #141414;
+    --surface2: #1e1e1e;
     --border: #2a2a2a;
     --text: #f0f0f0;
     --muted: #666;
@@ -102,15 +100,39 @@
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 4px;
-    padding: 1rem 1.2rem;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
+    overflow: hidden;
     transition: border-color 0.2s;
   }
 
   .result-card:hover { border-color: var(--accent); }
+
+  .card-main {
+    padding: 0.6rem 1rem 0.6rem 0.6rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .result-poster {
+    width: 48px;
+    height: 72px;
+    object-fit: cover;
+    border-radius: 3px;
+    background: var(--border);
+    flex-shrink: 0;
+  }
+
+  .no-poster {
+    width: 48px;
+    height: 72px;
+    border-radius: 3px;
+    background: var(--border);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.4rem;
+  }
 
   .result-info { flex: 1; }
 
@@ -122,145 +144,3 @@
 
   .result-meta {
     font-size: 0.78rem;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-
-  .stream-btn {
-    background: transparent;
-    border: 1px solid var(--accent);
-    color: var(--accent);
-    font-family: 'Bebas Neue', sans-serif;
-    font-size: 0.95rem;
-    letter-spacing: 0.08em;
-    padding: 0.4rem 1rem;
-    border-radius: 3px;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: background 0.2s, color 0.2s;
-  }
-
-  .stream-btn:hover { background: var(--accent); color: #fff; }
-
-  #status {
-    color: var(--muted);
-    font-size: 0.85rem;
-    margin-top: 0.5rem;
-    min-height: 1.2em;
-  }
-</style>
-</head>
-<body>
-
-<h1>VID<span>SEARCH</span></h1>
-<p class="subtitle">Find it. Watch it.</p>
-
-<div class="search-row">
-  <input type="text" id="query" placeholder="Film or show name..." autofocus>
-  <button id="searchBtn">Search</button>
-</div>
-
-<div id="status"></div>
-<div id="results"></div>
-
-<script>
-  // ============================================
-  // TMDB API KEY
-  // ============================================
-  const TMDB_API_KEY = '9c2f0a71e20cf0f5c14709ed2d1ec9e0';
-
-  // ============================================
-  // STREAMING URL BASE — edit this line if the site moves
-  // ============================================
-  const STREAM_BASE = 'https://vidsrcme.ru/embed/';
-
-  const queryInput = document.getElementById('query');
-  const searchBtn  = document.getElementById('searchBtn');
-  const resultsDiv = document.getElementById('results');
-  const statusDiv  = document.getElementById('status');
-
-  searchBtn.addEventListener('click', doSearch);
-  queryInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
-
-  async function doSearch() {
-    const query = queryInput.value.trim();
-    if (!query) return;
-
-    resultsDiv.innerHTML = '';
-    statusDiv.textContent = 'Searching...';
-
-    try {
-      const res = await fetch(
-        `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&page=1`
-      );
-      const data = await res.json();
-
-      // Filter to only movies and TV shows, take top 5
-      const results = (data.results || [])
-        .filter(r => r.media_type === 'movie' || r.media_type === 'tv')
-        .slice(0, 5);
-
-      if (results.length === 0) {
-        statusDiv.textContent = 'No results found.';
-        return;
-      }
-
-      statusDiv.textContent = `${results.length} result${results.length > 1 ? 's' : ''} — pick one:`;
-      results.forEach(item => renderCard(item));
-
-    } catch (err) {
-      statusDiv.textContent = 'Something went wrong. Check your connection.';
-    }
-  }
-
-  function renderCard(item) {
-    const isMovie = item.media_type === 'movie';
-    const title   = isMovie ? item.title : item.name;
-    const year    = isMovie
-      ? (item.release_date || '').slice(0, 4)
-      : (item.first_air_date || '').slice(0, 4);
-    const type    = isMovie ? 'Movie' : 'TV Series';
-
-    const card = document.createElement('div');
-    card.className = 'result-card';
-    card.innerHTML = `
-      <div class="result-info">
-        <div class="result-title">${title}</div>
-        <div class="result-meta">${type}${year ? ' · ' + year : ''}</div>
-      </div>
-      <button class="stream-btn">Stream</button>
-    `;
-
-    card.querySelector('.stream-btn').addEventListener('click', () => openStream(item, isMovie));
-    resultsDiv.appendChild(card);
-  }
-
-  async function openStream(item, isMovie) {
-    statusDiv.textContent = 'Fetching IMDB ID...';
-
-    try {
-      const endpoint = isMovie
-        ? `https://api.themoviedb.org/3/movie/${item.id}/external_ids?api_key=${TMDB_API_KEY}`
-        : `https://api.themoviedb.org/3/tv/${item.id}/external_ids?api_key=${TMDB_API_KEY}`;
-
-      const res  = await fetch(endpoint);
-      const data = await res.json();
-      const imdbId = data.imdb_id;
-
-      if (!imdbId) {
-        statusDiv.textContent = 'No IMDB ID found for this title.';
-        return;
-      }
-
-      const url = STREAM_BASE + imdbId;
-      statusDiv.textContent = '';
-      window.open(url, '_blank');
-
-    } catch (err) {
-      statusDiv.textContent = 'Failed to get IMDB ID. Try again.';
-    }
-  }
-</script>
-</body>
-</html>
