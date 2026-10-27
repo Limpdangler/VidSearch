@@ -213,6 +213,17 @@
 
   .remove-btn:hover { color: var(--text); }
 
+  /* Thin bar along the bottom of a Continue watching card showing how far in you are */
+  .progress-track {
+    height: 3px;
+    background: var(--border);
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--accent);
+  }
+
   #results {
     width: 100%;
     max-width: 560px;
@@ -510,6 +521,7 @@
         title:   info.title,
         poster:  info.poster || null,
         tmdbId:  info.tmdbId,
+        isMovie: !!info.isMovie,
         t:       Date.now(),
         pos:     info.pos || 0,
         dur:     info.dur || 0
@@ -522,19 +534,20 @@
     return p && p.dur > 0 && p.pos / p.dur > 0.95;
   }
 
-  // Where to start a given episode: saved spot if it's the saved episode and not finished
-  function resumePoint(saved, season, episode) {
-    if (!saved || saved.season !== season || saved.episode !== episode) return 0;
-    if (isFinished(saved)) return 0;
-    return saved.pos > 10 ? Math.floor(saved.pos) : 0;
+  // How far through, 0–100 (0 if the length isn't known yet)
+  function percent(p) {
+    if (!p || !(p.dur > 0)) return 0;
+    return Math.max(0, Math.min(100, Math.round(p.pos / p.dur * 100)));
   }
 
-  // 1481 -> "24:41", 3725 -> "1:02:05"
-  function fmtTime(sec) {
-    sec = Math.floor(sec || 0);
-    const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
-    const mm = h ? String(m).padStart(2, '0') : m;
-    return (h ? h + ':' : '') + mm + ':' + String(s).padStart(2, '0');
+  // Where to start: the saved spot if it's the same episode (or the film) and not finished.
+  // Films have no season/episode, so both sides are null and still match.
+  function resumePoint(saved, season, episode) {
+    if (!saved) return 0;
+    if ((saved.season ?? null) !== (season ?? null)) return 0;
+    if ((saved.episode ?? null) !== (episode ?? null)) return 0;
+    if (isFinished(saved)) return 0;
+    return saved.pos > 10 ? Math.floor(saved.pos) : 0;
   }
 
   function removeProgress(imdbId) {
@@ -550,8 +563,8 @@
         if (!key || !key.startsWith('vs_progress_')) continue;
         try {
           const data = JSON.parse(localStorage.getItem(key));
-          // Older saves (before this update) have no title — skip them
-          if (data && data.title && data.tmdbId) {
+          // Skip very old saves (no title), and films you've finished — nothing left to continue
+          if (data && data.title && data.tmdbId && !(data.isMovie && isFinished(data))) {
             list.push({ ...data, imdbId: key.slice('vs_progress_'.length) });
           }
         } catch {}
@@ -579,9 +592,10 @@
         : `<div class="no-poster">🎬</div>`;
 
       const finished = isFinished(show);
-      let metaText = `S${show.season}E${show.episode}`;
-      if (finished)           metaText += ' · watched';
-      else if (show.pos > 10) metaText += ` · ${fmtTime(show.pos)}${show.dur ? ' / ' + fmtTime(show.dur) : ''}`;
+      const pct      = finished ? 100 : percent(show);
+      let metaText = show.isMovie ? 'Movie' : `S${show.season}E${show.episode}`;
+      if (finished)     metaText += ' · watched';
+      else if (pct > 0) metaText += ` · ${pct}%`;
 
       card.innerHTML = `
         <div class="card-main">
@@ -592,16 +606,17 @@
           </div>
           <button class="stream-btn">${finished ? 'Next ep' : 'Resume'}</button>
           <button class="remove-btn" title="Remove from list">✕</button>
-        </div>`;
+        </div>
+        <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>`;
 
       card.querySelector('.stream-btn').addEventListener('click', async () => {
         await domainReady;
         const base = {
           tmdbId: show.tmdbId, imdbId: show.imdbId, title: show.title,
-          poster: show.poster, isMovie: false
+          poster: show.poster, isMovie: !!show.isMovie
         };
 
-        if (finished) {
+        if (finished && !show.isMovie) {
           // Last episode was watched to the end — go straight to the one after it
           const seasons = await getSeasons(show.tmdbId);
           const next = neighbour(seasons, show.season, show.episode, 1);
@@ -711,15 +726,15 @@
     npTitle.textContent = info.title;
     npEp.textContent = info.isMovie ? 'Movie' : `Season ${info.season} · Episode ${info.episode}`;
 
-    if (!info.isMovie) {
-      const saved = getProgress(info.imdbId);
-      const sameEp = saved && saved.season === info.season && saved.episode === info.episode;
-      saveProgress(info.imdbId, {
-        ...info,
-        pos: startAt,
-        dur: sameEp ? saved.dur : 0
-      });
-    }
+    // Save to Continue watching (episodes and films)
+    const saved  = getProgress(info.imdbId);
+    const sameEp = saved && (saved.season ?? null) === (info.season ?? null)
+                         && (saved.episode ?? null) === (info.episode ?? null);
+    saveProgress(info.imdbId, {
+      ...info,
+      pos: startAt,
+      dur: sameEp ? saved.dur : 0
+    });
 
     playerEl.classList.add('visible');
     document.body.classList.add('playing');
@@ -765,7 +780,7 @@
   // { type: "PLAYER_EVENT", data: { player_status: "playing", player_progress: 1481.6,
   //   player_duration: 2880, player_info: { season: 1, episode: 2, ... } } }
   window.addEventListener('message', e => {
-    if (!current || current.isMovie) return;
+    if (!current) return;
 
     // Only trust messages from the player we loaded
     let playerHost;
@@ -785,13 +800,16 @@
 
     // Ignore reports about a different episode (e.g. a late message after pressing Next)
     const pi = d.player_info || {};
-    if (pi.season != null && Number(pi.season) !== current.season) return;
-    if (pi.episode != null && Number(pi.episode) !== current.episode) return;
+    if (!current.isMovie) {
+      if (pi.season != null && Number(pi.season) !== current.season) return;
+      if (pi.episode != null && Number(pi.episode) !== current.episode) return;
+    }
 
     // Players report 0 for a moment while loading — don't let that wipe a saved spot
     const saved = getProgress(current.imdbId);
-    if (pos < 1 && saved && saved.season === current.season &&
-        saved.episode === current.episode && saved.pos > 10) return;
+    if (pos < 1 && saved && saved.pos > 10 &&
+        (saved.season ?? null) === (current.season ?? null) &&
+        (saved.episode ?? null) === (current.episode ?? null)) return;
 
     saveProgress(current.imdbId, {
       ...current,
@@ -948,9 +966,9 @@
         if (saved && seasonData.some(s => s.n === saved.season)) {
           sSel.value = saved.season;
           updateEpisodes(saved.episode);
-          const at = resumePoint(saved, saved.season, saved.episode);
+          const pct = isFinished(saved) ? 0 : percent(saved);
           card.querySelector('.resume-hint').textContent =
-            `· S${saved.season}E${saved.episode}${at ? ' @ ' + fmtTime(at) : ''} saved`;
+            `· S${saved.season}E${saved.episode}${pct ? ' · ' + pct + '%' : ''} saved`;
         }
       }).catch(() => {
         epLoading.textContent = 'Could not load episode list.';
@@ -1009,7 +1027,7 @@
         isMovie,
         season,
         episode,
-        startAt: isMovie ? 0 : resumePoint(getProgress(imdbId), season, episode)
+        startAt: resumePoint(getProgress(imdbId), season, episode)
       });
 
     } catch (err) {
