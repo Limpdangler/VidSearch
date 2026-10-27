@@ -493,7 +493,8 @@
   }
 
   // ── Progress memory (localStorage) ──────────────────────────
-  // Each show is saved as: { season, episode, title, poster, tmdbId, t }
+  // Each show is saved as:
+  // { season, episode, title, poster, tmdbId, t, pos (seconds in), dur (episode length) }
   function getProgress(imdbId) {
     try {
       const raw = localStorage.getItem('vs_progress_' + imdbId);
@@ -509,9 +510,31 @@
         title:   info.title,
         poster:  info.poster || null,
         tmdbId:  info.tmdbId,
-        t:       Date.now()
+        t:       Date.now(),
+        pos:     info.pos || 0,
+        dur:     info.dur || 0
       }));
     } catch {}
+  }
+
+  // "Finished" = within the last 5% (end credits)
+  function isFinished(p) {
+    return p && p.dur > 0 && p.pos / p.dur > 0.95;
+  }
+
+  // Where to start a given episode: saved spot if it's the saved episode and not finished
+  function resumePoint(saved, season, episode) {
+    if (!saved || saved.season !== season || saved.episode !== episode) return 0;
+    if (isFinished(saved)) return 0;
+    return saved.pos > 10 ? Math.floor(saved.pos) : 0;
+  }
+
+  // 1481 -> "24:41", 3725 -> "1:02:05"
+  function fmtTime(sec) {
+    sec = Math.floor(sec || 0);
+    const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+    const mm = h ? String(m).padStart(2, '0') : m;
+    return (h ? h + ':' : '') + mm + ':' + String(s).padStart(2, '0');
   }
 
   function removeProgress(imdbId) {
@@ -555,23 +578,39 @@
         ? `<img class="result-poster" src="https://image.tmdb.org/t/p/w92${esc(show.poster)}" alt="">`
         : `<div class="no-poster">🎬</div>`;
 
+      const finished = isFinished(show);
+      let metaText = `S${show.season}E${show.episode}`;
+      if (finished)           metaText += ' · watched';
+      else if (show.pos > 10) metaText += ` · ${fmtTime(show.pos)}${show.dur ? ' / ' + fmtTime(show.dur) : ''}`;
+
       card.innerHTML = `
         <div class="card-main">
           ${poster}
           <div class="result-info">
             <div class="result-title">${esc(show.title)}</div>
-            <div class="result-meta">S${show.season}E${show.episode}</div>
+            <div class="result-meta">${metaText}</div>
           </div>
-          <button class="stream-btn">Resume</button>
+          <button class="stream-btn">${finished ? 'Next ep' : 'Resume'}</button>
           <button class="remove-btn" title="Remove from list">✕</button>
         </div>`;
 
       card.querySelector('.stream-btn').addEventListener('click', async () => {
         await domainReady;
-        play({
+        const base = {
           tmdbId: show.tmdbId, imdbId: show.imdbId, title: show.title,
-          poster: show.poster, isMovie: false,
-          season: show.season, episode: show.episode
+          poster: show.poster, isMovie: false
+        };
+
+        if (finished) {
+          // Last episode was watched to the end — go straight to the one after it
+          const seasons = await getSeasons(show.tmdbId);
+          const next = neighbour(seasons, show.season, show.episode, 1);
+          if (next) { play({ ...base, ...next, startAt: 0 }); return; }
+        }
+
+        play({
+          ...base, season: show.season, episode: show.episode,
+          startAt: resumePoint(show, show.season, show.episode)
         });
       });
 
@@ -659,15 +698,28 @@
   function play(info) {
     current = info;
 
-    const url = info.isMovie
+    let url = info.isMovie
       ? STREAM_MOVIE + info.imdbId
       : `${STREAM_TV}${info.imdbId}/${info.season}/${info.episode}`;
+
+    // Ask the player to start where you left off.
+    // startAt is vidsrc's name for it; progress is a common alternative — players ignore names they don't know.
+    const startAt = Math.floor(info.startAt || 0);
+    if (startAt > 0) url += `?startAt=${startAt}&progress=${startAt}`;
 
     playerFrame.src = url;
     npTitle.textContent = info.title;
     npEp.textContent = info.isMovie ? 'Movie' : `Season ${info.season} · Episode ${info.episode}`;
 
-    if (!info.isMovie) saveProgress(info.imdbId, info);
+    if (!info.isMovie) {
+      const saved = getProgress(info.imdbId);
+      const sameEp = saved && saved.season === info.season && saved.episode === info.episode;
+      saveProgress(info.imdbId, {
+        ...info,
+        pos: startAt,
+        dur: sameEp ? saved.dur : 0
+      });
+    }
 
     playerEl.classList.add('visible');
     document.body.classList.add('playing');
@@ -705,8 +757,51 @@
     const seasons = await getSeasons(current.tmdbId);
     const target  = neighbour(seasons, current.season, current.episode, dir);
     if (!target) return;
-    play({ ...current, season: target.season, episode: target.episode });
+    play({ ...current, season: target.season, episode: target.episode, startAt: 0 });
   }
+
+  // ── Listen to the player's position reports ─────────────────
+  // The player sends messages like:
+  // { type: "PLAYER_EVENT", data: { player_status: "playing", player_progress: 1481.6,
+  //   player_duration: 2880, player_info: { season: 1, episode: 2, ... } } }
+  window.addEventListener('message', e => {
+    if (!current || current.isMovie) return;
+
+    // Only trust messages from the player we loaded
+    let playerHost;
+    try { playerHost = new URL(playerFrame.src).hostname; } catch { return; }
+    let fromHost;
+    try { fromHost = new URL(e.origin).hostname; } catch { return; }
+    if (fromHost !== playerHost) return;
+
+    let msg = e.data;
+    if (typeof msg === 'string') { try { msg = JSON.parse(msg); } catch { return; } }
+    if (!msg || msg.type !== 'PLAYER_EVENT' || !msg.data) return;
+
+    const d = msg.data;
+    const pos = Number(d.player_progress);
+    const dur = Number(d.player_duration);
+    if (!isFinite(pos)) return;
+
+    // Ignore reports about a different episode (e.g. a late message after pressing Next)
+    const pi = d.player_info || {};
+    if (pi.season != null && Number(pi.season) !== current.season) return;
+    if (pi.episode != null && Number(pi.episode) !== current.episode) return;
+
+    // Players report 0 for a moment while loading — don't let that wipe a saved spot
+    const saved = getProgress(current.imdbId);
+    if (pos < 1 && saved && saved.season === current.season &&
+        saved.episode === current.episode && saved.pos > 10) return;
+
+    saveProgress(current.imdbId, {
+      ...current,
+      pos,
+      dur: isFinite(dur) && dur > 0 ? dur : (saved && saved.dur) || 0
+    });
+
+    // Refresh the Continue watching times when you pause or finish
+    if (d.player_status === 'paused' || d.player_status === 'ended') renderContinue();
+  });
 
   function closePlayer() {
     playerFrame.src = 'about:blank';
@@ -853,7 +948,9 @@
         if (saved && seasonData.some(s => s.n === saved.season)) {
           sSel.value = saved.season;
           updateEpisodes(saved.episode);
-          card.querySelector('.resume-hint').textContent = `· S${saved.season}E${saved.episode} saved`;
+          const at = resumePoint(saved, saved.season, saved.episode);
+          card.querySelector('.resume-hint').textContent =
+            `· S${saved.season}E${saved.episode}${at ? ' @ ' + fmtTime(at) : ''} saved`;
         }
       }).catch(() => {
         epLoading.textContent = 'Could not load episode list.';
@@ -911,7 +1008,8 @@
         poster: item.poster_path,
         isMovie,
         season,
-        episode
+        episode,
+        startAt: isMovie ? 0 : resumePoint(getProgress(imdbId), season, episode)
       });
 
     } catch (err) {
