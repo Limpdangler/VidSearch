@@ -49,6 +49,93 @@
     margin-bottom: 2.5rem;
   }
 
+  /* ── Built-in player ───────────────────────────── */
+  .player {
+    width: 100%;
+    max-width: 960px;
+    margin-bottom: 2.5rem;
+    display: none;
+  }
+
+  .player.visible { display: block; }
+
+  .player-frame {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background: #000;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .player-frame iframe {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+  }
+
+  .player-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+  }
+
+  .now-playing {
+    flex: 1;
+    min-width: 0;
+    text-align: center;
+  }
+
+  #npTitle {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  #npEp {
+    font-size: 0.78rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .ctrl-btn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.1rem;
+    letter-spacing: 0.08em;
+    padding: 0.55rem 1.2rem;
+    border-radius: 3px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 0.2s;
+  }
+
+  .ctrl-btn:hover { opacity: 0.85; }
+  .ctrl-btn:disabled { opacity: 0.25; cursor: default; }
+  .ctrl-btn.hidden { visibility: hidden; }
+
+  .ctrl-btn.ghost {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+
+  .player-hint {
+    margin-top: 0.5rem;
+    font-size: 0.72rem;
+    color: var(--muted);
+    text-align: center;
+    letter-spacing: 0.04em;
+  }
+
   .search-row {
     display: flex;
     gap: 0.75rem;
@@ -87,6 +174,35 @@
   }
 
   button#searchBtn:hover { opacity: 0.85; }
+
+  /* ── Continue watching ─────────────────────────── */
+  #continue {
+    width: 100%;
+    max-width: 560px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    margin-bottom: 2rem;
+  }
+
+  .section-label {
+    font-size: 0.78rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  .remove-btn {
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font-size: 1.1rem;
+    cursor: pointer;
+    padding: 0.2rem 0.4rem;
+    flex-shrink: 0;
+  }
+
+  .remove-btn:hover { color: var(--text); }
 
   #results {
     width: 100%;
@@ -134,7 +250,7 @@
     font-size: 1.4rem;
   }
 
-  .result-info { flex: 1; }
+  .result-info { flex: 1; min-width: 0; }
 
   .result-title {
     font-size: 1rem;
@@ -264,9 +380,53 @@
     margin-top: 0.5rem;
     min-height: 1.2em;
   }
+
+  /* Clear highlight on whatever the keyboard is pointing at (handy on a TV) */
+  button:focus-visible, select:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* Our own fullscreen: video + Prev/Next bar fill the screen together */
+  .player.visible:fullscreen {
+    max-width: none;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0.75rem;
+    background: #000;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .player:fullscreen .player-frame {
+    flex: 1;
+    aspect-ratio: auto;
+    border: none;
+  }
+
+  .player:fullscreen .player-hint { display: none; }
 </style>
 </head>
 <body>
+
+<!-- Built-in player (hidden until something is played) -->
+<div id="player" class="player">
+  <div class="player-frame">
+    <iframe id="playerFrame" allowfullscreen allow="autoplay; fullscreen; encrypted-media; picture-in-picture"></iframe>
+  </div>
+  <div class="player-bar">
+    <button id="prevBtn" class="ctrl-btn">‹ Prev</button>
+    <div class="now-playing">
+      <div id="npTitle"></div>
+      <div id="npEp"></div>
+    </div>
+    <button id="nextBtn" class="ctrl-btn">Next ›</button>
+    <button id="fsBtn" class="ctrl-btn ghost" title="Fullscreen with controls">⛶</button>
+    <button id="closeBtn" class="ctrl-btn ghost" title="Close player">✕</button>
+  </div>
+  <div class="player-hint" id="playerHint">Keys: N = next · B = previous · F = fullscreen (click outside the video first)</div>
+</div>
 
 <h1>VID<span>SEARCH</span></h1>
 <p class="subtitle">Find it. Watch it.</p>
@@ -275,6 +435,8 @@
   <input type="text" id="query" placeholder="Film or show name..." autofocus>
   <button id="searchBtn">Search</button>
 </div>
+
+<div id="continue"></div>
 
 <div id="status"></div>
 <div id="results"></div>
@@ -315,12 +477,21 @@
     }
   })();
 
-  const queryInput = document.getElementById('query');
-  const searchBtn  = document.getElementById('searchBtn');
-  const resultsDiv = document.getElementById('results');
-  const statusDiv  = document.getElementById('status');
+  const queryInput  = document.getElementById('query');
+  const searchBtn   = document.getElementById('searchBtn');
+  const resultsDiv  = document.getElementById('results');
+  const statusDiv   = document.getElementById('status');
+  const continueDiv = document.getElementById('continue');
+
+  // Small helper so show titles can't break the page layout
+  function esc(str) {
+    return String(str || '').replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
 
   // ── Progress memory (localStorage) ──────────────────────────
+  // Each show is saved as: { season, episode, title, poster, tmdbId, t }
   function getProgress(imdbId) {
     try {
       const raw = localStorage.getItem('vs_progress_' + imdbId);
@@ -328,28 +499,262 @@
     } catch { return null; }
   }
 
-  function saveProgress(imdbId, season, episode) {
+  function saveProgress(imdbId, info) {
     try {
-      localStorage.setItem('vs_progress_' + imdbId, JSON.stringify({ season, episode }));
+      localStorage.setItem('vs_progress_' + imdbId, JSON.stringify({
+        season:  info.season,
+        episode: info.episode,
+        title:   info.title,
+        poster:  info.poster || null,
+        tmdbId:  info.tmdbId,
+        t:       Date.now()
+      }));
     } catch {}
   }
+
+  function removeProgress(imdbId) {
+    try { localStorage.removeItem('vs_progress_' + imdbId); } catch {}
+  }
+
+  // All saved shows, most recently watched first
+  function getAllProgress() {
+    const list = [];
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key || !key.startsWith('vs_progress_')) continue;
+        try {
+          const data = JSON.parse(localStorage.getItem(key));
+          // Older saves (before this update) have no title — skip them
+          if (data && data.title && data.tmdbId) {
+            list.push({ ...data, imdbId: key.slice('vs_progress_'.length) });
+          }
+        } catch {}
+      }
+    } catch {}
+    return list.sort((a, b) => (b.t || 0) - (a.t || 0)).slice(0, 6);
+  }
+
+  // ── Continue watching row ───────────────────────────────────
+  function renderContinue() {
+    const list = getAllProgress();
+    continueDiv.innerHTML = '';
+    if (!list.length) return;
+
+    const label = document.createElement('div');
+    label.className = 'section-label';
+    label.textContent = 'Continue watching';
+    continueDiv.appendChild(label);
+
+    list.forEach(show => {
+      const card = document.createElement('div');
+      card.className = 'result-card';
+      const poster = show.poster
+        ? `<img class="result-poster" src="https://image.tmdb.org/t/p/w92${esc(show.poster)}" alt="">`
+        : `<div class="no-poster">🎬</div>`;
+
+      card.innerHTML = `
+        <div class="card-main">
+          ${poster}
+          <div class="result-info">
+            <div class="result-title">${esc(show.title)}</div>
+            <div class="result-meta">S${show.season}E${show.episode}</div>
+          </div>
+          <button class="stream-btn">Resume</button>
+          <button class="remove-btn" title="Remove from list">✕</button>
+        </div>`;
+
+      card.querySelector('.stream-btn').addEventListener('click', async () => {
+        await domainReady;
+        play({
+          tmdbId: show.tmdbId, imdbId: show.imdbId, title: show.title,
+          poster: show.poster, isMovie: false,
+          season: show.season, episode: show.episode
+        });
+      });
+
+      card.querySelector('.remove-btn').addEventListener('click', () => {
+        removeProgress(show.imdbId);
+        renderContinue();
+      });
+
+      continueDiv.appendChild(card);
+    });
+  }
+
+  // ── TMDB helper ─────────────────────────────────────────────
+  async function tmdb(path, extra = '') {
+    const res = await fetch(`https://api.themoviedb.org/3/${path}?api_key=${TMDB_API_KEY}${extra}`);
+    if (!res.ok) throw new Error('TMDB error ' + res.status);
+    return res.json();
+  }
+
+  // Turns TMDB's show info into [{ n: seasonNumber, count: episodeCount }],
+  // leaving out episodes that haven't aired yet (they wouldn't play anyway).
+  function parseSeasons(data) {
+    let seasons = (data.seasons || [])
+      .filter(s => s.season_number > 0 && s.episode_count > 0)
+      .map(s => ({ n: s.season_number, count: s.episode_count }));
+
+    const last = data.last_episode_to_air;
+    if (last && last.season_number > 0) {
+      seasons = seasons
+        .filter(s => s.n <= last.season_number)
+        .map(s => s.n === last.season_number
+          ? { n: s.n, count: Math.min(s.count, last.episode_number) }
+          : s);
+    }
+    return seasons;
+  }
+
+  // One request per show gets both the seasons and the IMDB ID.
+  // Remembered for the session, so the player and search cards share it.
+  const showCache = {};
+
+  function getShow(tmdbId) {
+    if (!showCache[tmdbId]) {
+      showCache[tmdbId] = tmdb(`tv/${tmdbId}`, '&append_to_response=external_ids')
+        .then(data => ({
+          seasons: parseSeasons(data),
+          imdbId:  (data.external_ids && data.external_ids.imdb_id) || null
+        }))
+        .catch(err => { delete showCache[tmdbId]; throw err; }); // allow a retry later
+    }
+    return showCache[tmdbId];
+  }
+
+  async function getSeasons(tmdbId) {
+    try { return (await getShow(tmdbId)).seasons; }
+    catch { return []; }
+  }
+
+  // Works out the episode after (dir = 1) or before (dir = -1) the current one,
+  // rolling over between seasons. Returns null if there isn't one.
+  function neighbour(seasons, season, episode, dir) {
+    const idx = seasons.findIndex(s => s.n === season);
+    if (idx === -1) return null;
+    if (dir === 1) {
+      if (episode < seasons[idx].count) return { season, episode: episode + 1 };
+      if (idx + 1 < seasons.length)     return { season: seasons[idx + 1].n, episode: 1 };
+    } else {
+      if (episode > 1) return { season, episode: episode - 1 };
+      if (idx > 0)     return { season: seasons[idx - 1].n, episode: seasons[idx - 1].count };
+    }
+    return null;
+  }
+
+  // ── Player ──────────────────────────────────────────────────
+  const playerEl    = document.getElementById('player');
+  const playerFrame = document.getElementById('playerFrame');
+  const prevBtn     = document.getElementById('prevBtn');
+  const nextBtn     = document.getElementById('nextBtn');
+  const closeBtn    = document.getElementById('closeBtn');
+  const fsBtn       = document.getElementById('fsBtn');
+  const npTitle     = document.getElementById('npTitle');
+  const npEp        = document.getElementById('npEp');
+  const playerHint  = document.getElementById('playerHint');
+
+  let current = null; // what's playing right now
+
+  function play(info) {
+    current = info;
+
+    const url = info.isMovie
+      ? STREAM_MOVIE + info.imdbId
+      : `${STREAM_TV}${info.imdbId}/${info.season}/${info.episode}`;
+
+    playerFrame.src = url;
+    npTitle.textContent = info.title;
+    npEp.textContent = info.isMovie ? 'Movie' : `Season ${info.season} · Episode ${info.episode}`;
+
+    if (!info.isMovie) saveProgress(info.imdbId, info);
+
+    playerEl.classList.add('visible');
+    if (!document.fullscreenElement) window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    // Take focus off the search box/buttons so N / B / F work straight away
+    if (document.activeElement && document.activeElement !== document.body) {
+      document.activeElement.blur();
+    }
+
+    updateNavButtons();
+    renderContinue();
+  }
+
+  async function updateNavButtons() {
+    if (!current || current.isMovie) {
+      prevBtn.classList.add('hidden');
+      nextBtn.classList.add('hidden');
+      playerHint.style.display = 'none';
+      return;
+    }
+    prevBtn.classList.remove('hidden');
+    nextBtn.classList.remove('hidden');
+    playerHint.style.display = '';
+
+    const playing = current;
+    const seasons = await getSeasons(playing.tmdbId);
+    if (current !== playing) return; // user already moved on
+    prevBtn.disabled = !neighbour(seasons, playing.season, playing.episode, -1);
+    nextBtn.disabled = !neighbour(seasons, playing.season, playing.episode, 1);
+  }
+
+  async function step(dir) {
+    if (!current || current.isMovie) return;
+    const seasons = await getSeasons(current.tmdbId);
+    const target  = neighbour(seasons, current.season, current.episode, dir);
+    if (!target) return;
+    play({ ...current, season: target.season, episode: target.episode });
+  }
+
+  function toggleFullscreen() {
+    try {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else if (playerEl.requestFullscreen) playerEl.requestFullscreen();
+    } catch {}
+  }
+
+  function closePlayer() {
+    if (document.fullscreenElement) { try { document.exitFullscreen(); } catch {} }
+    playerFrame.src = 'about:blank';
+    playerEl.classList.remove('visible');
+    current = null;
+  }
+
+  prevBtn.addEventListener('click', () => step(-1));
+  nextBtn.addEventListener('click', () => step(1));
+  fsBtn.addEventListener('click', toggleFullscreen);
+  closeBtn.addEventListener('click', closePlayer);
+
+  // Keyboard shortcuts — only when the player is open and you're not typing
+  document.addEventListener('keydown', e => {
+    if (!current) return;
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
+
+    const k = e.key;
+    if (k === 'n' || k === 'N' || k === 'MediaTrackNext')     { e.preventDefault(); step(1); }
+    if (k === 'b' || k === 'B' || k === 'MediaTrackPrevious') { e.preventDefault(); step(-1); }
+    if (k === 'f' || k === 'F')                               { e.preventDefault(); toggleFullscreen(); }
+  });
 
   // ── Search ───────────────────────────────────────────────────
   searchBtn.addEventListener('click', doSearch);
   queryInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
 
+  let searchId = 0; // stops a slow old search from overwriting a newer one
+
   async function doSearch() {
     const query = queryInput.value.trim();
     if (!query) return;
 
+    const myId = ++searchId;
     resultsDiv.innerHTML = '';
     statusDiv.textContent = 'Searching...';
 
     try {
-      const res = await fetch(
-        `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&page=1`
-      );
-      const data = await res.json();
+      const data = await tmdb('search/multi', `&query=${encodeURIComponent(query)}&page=1`);
+      if (myId !== searchId) return;
 
       const results = (data.results || [])
         .filter(r => r.media_type === 'movie' || r.media_type === 'tv')
@@ -364,7 +769,7 @@
       results.forEach(item => renderCard(item));
 
     } catch (err) {
-      statusDiv.textContent = 'Something went wrong. Check your connection.';
+      if (myId === searchId) statusDiv.textContent = 'Something went wrong. Check your connection.';
     }
   }
 
@@ -377,7 +782,7 @@
       : (item.first_air_date || '').slice(0, 4);
     const type    = isMovie ? 'Movie' : 'TV Series';
     const poster  = item.poster_path
-      ? `<img class="result-poster" src="https://image.tmdb.org/t/p/w92${item.poster_path}" alt="${title}">`
+      ? `<img class="result-poster" src="https://image.tmdb.org/t/p/w92${item.poster_path}" alt="${esc(title)}">`
       : `<div class="no-poster">🎬</div>`;
 
     const card = document.createElement('div');
@@ -387,7 +792,7 @@
       <div class="card-main">
         ${poster}
         <div class="result-info">
-          <div class="result-title">${title}</div>
+          <div class="result-title">${esc(title)}</div>
           <div class="result-meta">${type}${year ? ' · ' + year : ''}<span class="resume-hint"></span></div>
         </div>
         <button class="stream-btn">Stream</button>
@@ -423,58 +828,45 @@
       const goBtn     = card.querySelector('.ep-go-btn');
       const epLoading = card.querySelector('.ep-loading');
       let cachedImdbId  = null;
-      let seasonData    = []; // [{season_number, episode_count}]
-
-      // Populate season dropdown and episode counts from TMDB
-      async function loadSeasons() {
-        try {
-          const res  = await fetch(`https://api.themoviedb.org/3/tv/${item.id}?api_key=${TMDB_API_KEY}`);
-          const data = await res.json();
-          seasonData = (data.seasons || []).filter(s => s.season_number > 0);
-
-          sSel.innerHTML = seasonData.map(s =>
-            `<option value="${s.season_number}">S${s.season_number}</option>`
-          ).join('');
-
-          updateEpisodes();
-          epLoading.style.display = 'none';
-        } catch {
-          epLoading.textContent = 'Could not load episode list.';
-        }
-      }
+      let seasonData    = []; // [{ n: seasonNumber, count: episodeCount }]
 
       function updateEpisodes(keepEp) {
-        const sNum = parseInt(sSel.value);
-        const season = seasonData.find(s => s.season_number === sNum);
-        const count  = season ? season.episode_count : 1;
-        const current = keepEp || 1;
+        const sNum   = parseInt(sSel.value);
+        const season = seasonData.find(s => s.n === sNum);
+        const count  = season ? season.count : 1;
+        const chosen = keepEp || 1;
         eSel.innerHTML = Array.from({ length: count }, (_, i) =>
-          `<option value="${i + 1}"${i + 1 === current ? ' selected' : ''}>E${i + 1}</option>`
+          `<option value="${i + 1}"${i + 1 === chosen ? ' selected' : ''}>E${i + 1}</option>`
         ).join('');
       }
 
       sSel.addEventListener('change', () => updateEpisodes());
 
-      // Fetch IMDB ID and seasons independently — restore progress as soon as both are ready
-      fetchImdbId(item.id, false).then(imdbId => {
-        if (!imdbId) return;
-        cachedImdbId = imdbId;
-        tryRestoreProgress();
-      });
+      // One request gets the seasons and IMDB ID together, then restores saved progress
+      getShow(item.id).then(show => {
+        seasonData   = show.seasons;
+        cachedImdbId = show.imdbId;
 
-      loadSeasons().then(() => {
-        tryRestoreProgress();
-      });
+        if (!cachedImdbId || !seasonData.length) {
+          epLoading.textContent = 'No episodes available for this show.';
+          return;
+        }
 
-      function tryRestoreProgress() {
-        if (!cachedImdbId || !seasonData.length) return; // wait until both are ready
+        sSel.innerHTML = seasonData.map(s =>
+          `<option value="${s.n}">S${s.n}</option>`
+        ).join('');
+        updateEpisodes();
+        epLoading.style.display = 'none';
+
         const saved = getProgress(cachedImdbId);
-        if (!saved) return;
-        sSel.value = saved.season;
-        updateEpisodes(saved.episode);
-        const hint = card.querySelector('.resume-hint');
-        hint.textContent = `· S${saved.season}E${saved.episode} saved`;
-      }
+        if (saved && seasonData.some(s => s.n === saved.season)) {
+          sSel.value = saved.season;
+          updateEpisodes(saved.episode);
+          card.querySelector('.resume-hint').textContent = `· S${saved.season}E${saved.episode} saved`;
+        }
+      }).catch(() => {
+        epLoading.textContent = 'Could not load episode list.';
+      });
 
       // Stream button — show picker and stream current selection
       streamBtn.addEventListener('click', () => {
@@ -501,15 +893,12 @@
 
   // ── Fetch IMDB ID ────────────────────────────────────────────
   async function fetchImdbId(tmdbId, isMovie) {
-    const endpoint = isMovie
-      ? `https://api.themoviedb.org/3/movie/${tmdbId}/external_ids?api_key=${TMDB_API_KEY}`
-      : `https://api.themoviedb.org/3/tv/${tmdbId}/external_ids?api_key=${TMDB_API_KEY}`;
-    const res  = await fetch(endpoint);
-    const data = await res.json();
+    if (!isMovie) return (await getShow(tmdbId)).imdbId;
+    const data = await tmdb(`movie/${tmdbId}/external_ids`);
     return data.imdb_id || null;
   }
 
-  // ── Open stream ──────────────────────────────────────────────
+  // ── Open stream (now plays in the built-in player) ───────────
   async function openStream(item, isMovie, season, episode, title, cachedImdbId) {
     statusDiv.textContent = 'Loading...';
     await domainReady; // ensure domain check has finished before building URL
@@ -522,24 +911,25 @@
         return;
       }
 
-      let url;
-      if (isMovie) {
-        url = STREAM_MOVIE + imdbId;
-      } else {
-        url = `${STREAM_TV}${imdbId}/${season}/${episode}`;
-        saveProgress(imdbId, season, episode);
-      }
-
       statusDiv.textContent = '';
 
-      // Named tab per title so re-opening same show reuses the tab
-      const tabName = 'vs_' + title.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '');
-      window.open(url, tabName);
+      play({
+        tmdbId: item.id,
+        imdbId,
+        title,
+        poster: item.poster_path,
+        isMovie,
+        season,
+        episode
+      });
 
     } catch (err) {
       statusDiv.textContent = 'Failed to open stream. Try again.';
     }
   }
+
+  // Show the Continue watching row on page load
+  renderContinue();
 </script>
 </body>
 </html>
