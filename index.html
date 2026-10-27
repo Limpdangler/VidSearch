@@ -45,7 +45,6 @@
     color: var(--muted);
     font-size: 0.85rem;
     letter-spacing: 0.1em;
-    text-transform: uppercase;
     margin-bottom: 2.5rem;
   }
 
@@ -77,18 +76,21 @@
     border: 0;
   }
 
-  .player-bar {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
+  .now-playing {
     margin-top: 0.75rem;
+    text-align: center;
+    min-width: 0;
   }
 
-  .now-playing {
-    flex: 1;
-    min-width: 0;
-    text-align: center;
+  .player-bar {
+    display: flex;
+    align-items: stretch;
+    gap: 0.6rem;
+    margin-top: 0.6rem;
   }
+
+  /* Prev and Next share the width equally; the ✕ stays small */
+  #prevBtn, #nextBtn { flex: 1; }
 
   #npTitle {
     font-weight: 500;
@@ -102,6 +104,7 @@
     color: var(--muted);
     text-transform: uppercase;
     letter-spacing: 0.08em;
+    white-space: nowrap;
   }
 
   .ctrl-btn {
@@ -146,6 +149,7 @@
 
   input[type="text"] {
     flex: 1;
+    min-width: 0; /* lets the box shrink so the Search button stays on screen */
     background: var(--surface);
     border: 1px solid var(--border);
     color: var(--text);
@@ -387,53 +391,46 @@
     outline-offset: 2px;
   }
 
-  /* Our own fullscreen: video + Prev/Next bar fill the screen together */
-  .player.visible:fullscreen {
-    max-width: none;
-    width: 100%;
-    height: 100%;
-    margin: 0;
-    padding: 0.75rem;
-    background: #000;
-    display: flex;
-    flex-direction: column;
-  }
+  /* While something is playing, shrink the big title so search + video fit on screen */
+  body.playing { justify-content: flex-start; }
+  body.playing h1 { font-size: 2.4rem; }
+  body.playing .subtitle { display: none; }
+  body.playing h1 { margin-bottom: 1rem; }
 
-  .player:fullscreen .player-frame {
-    flex: 1;
-    aspect-ratio: auto;
-    border: none;
+  /* Phones */
+  @media (max-width: 600px) {
+    body { padding: 1rem; }
+    .search-row { gap: 0.5rem; }
+    button#searchBtn { padding: 0 1rem; }
+    .player-hint { display: none; } /* no keyboard on a phone */
   }
-
-  .player:fullscreen .player-hint { display: none; }
 </style>
 </head>
 <body>
+
+<h1>VID<span>SEARCH</span></h1>
+<p class="subtitle">its literally free bro</p>
+
+<div class="search-row">
+  <input type="text" id="query" placeholder="Film or show name..." autofocus>
+  <button id="searchBtn">Search</button>
+</div>
 
 <!-- Built-in player (hidden until something is played) -->
 <div id="player" class="player">
   <div class="player-frame">
     <iframe id="playerFrame" allowfullscreen allow="autoplay; fullscreen; encrypted-media; picture-in-picture"></iframe>
   </div>
+  <div class="now-playing">
+    <div id="npTitle"></div>
+    <div id="npEp"></div>
+  </div>
   <div class="player-bar">
     <button id="prevBtn" class="ctrl-btn">‹ Prev</button>
-    <div class="now-playing">
-      <div id="npTitle"></div>
-      <div id="npEp"></div>
-    </div>
     <button id="nextBtn" class="ctrl-btn">Next ›</button>
-    <button id="fsBtn" class="ctrl-btn ghost" title="Fullscreen with controls">⛶</button>
     <button id="closeBtn" class="ctrl-btn ghost" title="Close player">✕</button>
   </div>
-  <div class="player-hint" id="playerHint">Keys: N = next · B = previous · F = fullscreen (click outside the video first)</div>
-</div>
-
-<h1>VID<span>SEARCH</span></h1>
-<p class="subtitle">Find it. Watch it.</p>
-
-<div class="search-row">
-  <input type="text" id="query" placeholder="Film or show name..." autofocus>
-  <button id="searchBtn">Search</button>
+  <div class="player-hint" id="playerHint">Keys: N = next · B = previous (click outside the video first)</div>
 </div>
 
 <div id="continue"></div>
@@ -648,9 +645,7 @@
   const playerFrame = document.getElementById('playerFrame');
   const prevBtn     = document.getElementById('prevBtn');
   const nextBtn     = document.getElementById('nextBtn');
-  const closeBtn    = document.getElementById('closeBtn');
-  const fsBtn       = document.getElementById('fsBtn');
-  const npTitle     = document.getElementById('npTitle');
+  const closeBtn    = document.getElementById('closeBtn');  const npTitle     = document.getElementById('npTitle');
   const npEp        = document.getElementById('npEp');
   const playerHint  = document.getElementById('playerHint');
 
@@ -670,7 +665,8 @@
     if (!info.isMovie) saveProgress(info.imdbId, info);
 
     playerEl.classList.add('visible');
-    if (!document.fullscreenElement) window.scrollTo({ top: 0, behavior: 'smooth' });
+    document.body.classList.add('playing');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
 
     // Take focus off the search box/buttons so N / B / F work straight away
     if (document.activeElement && document.activeElement !== document.body) {
@@ -707,23 +703,15 @@
     play({ ...current, season: target.season, episode: target.episode });
   }
 
-  function toggleFullscreen() {
-    try {
-      if (document.fullscreenElement) document.exitFullscreen();
-      else if (playerEl.requestFullscreen) playerEl.requestFullscreen();
-    } catch {}
-  }
-
   function closePlayer() {
-    if (document.fullscreenElement) { try { document.exitFullscreen(); } catch {} }
     playerFrame.src = 'about:blank';
     playerEl.classList.remove('visible');
+    document.body.classList.remove('playing');
     current = null;
   }
 
   prevBtn.addEventListener('click', () => step(-1));
   nextBtn.addEventListener('click', () => step(1));
-  fsBtn.addEventListener('click', toggleFullscreen);
   closeBtn.addEventListener('click', closePlayer);
 
   // Keyboard shortcuts — only when the player is open and you're not typing
@@ -734,9 +722,7 @@
 
     const k = e.key;
     if (k === 'n' || k === 'N' || k === 'MediaTrackNext')     { e.preventDefault(); step(1); }
-    if (k === 'b' || k === 'B' || k === 'MediaTrackPrevious') { e.preventDefault(); step(-1); }
-    if (k === 'f' || k === 'F')                               { e.preventDefault(); toggleFullscreen(); }
-  });
+    if (k === 'b' || k === 'B' || k === 'MediaTrackPrevious') { e.preventDefault(); step(-1); }  });
 
   // ── Search ───────────────────────────────────────────────────
   searchBtn.addEventListener('click', doSearch);
