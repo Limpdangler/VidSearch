@@ -3,6 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<!-- ✏️ TAGLINE: change the words between the quotes. Keep the quotes and the semicolon. -->
+<script>const TAGLINE = "The first streaming site to condemn 9/11";</script>
+
 <title>Vid Search</title>
 <link rel="icon" type="image/png" sizes="32x32" href="icon-32.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
@@ -212,6 +216,40 @@
   }
 
   .remove-btn:hover { color: var(--text); }
+
+  /* ── Up next countdown ─────────────────────────── */
+  .up-next {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    text-align: center;
+    padding: 1rem;
+  }
+
+  .up-next.visible { display: flex; }
+
+  .up-next-label {
+    font-size: 0.75rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+
+  .up-next-title { font-weight: 500; font-size: 1.05rem; }
+
+  .up-next-count {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 2.4rem;
+    color: var(--accent);
+    line-height: 1;
+  }
+
+  .up-next-btns { display: flex; gap: 0.6rem; margin-top: 0.4rem; }
 
   /* Thin bar along the bottom of a Continue watching card showing how far in you are */
   .progress-track {
@@ -425,7 +463,11 @@
 <body>
 
 <h1>VID<span>SEARCH</span></h1>
-<p class="subtitle">The first streaming site to publicly condemn 9/11</p>
+<p class="subtitle" id="tagline"></p>
+<script>
+  // Fills in the tagline set at the top of this file
+  document.getElementById('tagline').textContent = typeof TAGLINE === 'string' ? TAGLINE : '';
+</script>
 
 <div class="search-row">
   <input type="text" id="query" placeholder="Film or show name..." autofocus>
@@ -436,6 +478,16 @@
 <div id="player" class="player">
   <div class="player-frame">
     <iframe id="playerFrame" allowfullscreen allow="autoplay; fullscreen; encrypted-media; picture-in-picture"></iframe>
+    <!-- Auto-play countdown, shown over the video when an episode ends -->
+    <div id="upNext" class="up-next">
+      <div class="up-next-label">Up next</div>
+      <div id="upNextTitle" class="up-next-title"></div>
+      <div id="upNextCount" class="up-next-count"></div>
+      <div class="up-next-btns">
+        <button id="upNextPlay" class="ctrl-btn">Play now</button>
+        <button id="upNextCancel" class="ctrl-btn ghost">Cancel</button>
+      </div>
+    </div>
   </div>
   <div class="now-playing">
     <div id="npTitle"></div>
@@ -710,7 +762,56 @@
 
   let current = null; // what's playing right now
 
+  // ── Auto-play next episode ──────────────────────────────────
+  const upNextEl     = document.getElementById('upNext');
+  const upNextTitle  = document.getElementById('upNextTitle');
+  const upNextCount  = document.getElementById('upNextCount');
+  const UP_NEXT_SECS = 10;
+  let upNextTimer  = null;
+  let upNextDoneFor = null; // stops the countdown re-appearing for the same episode
+
+  function epKey(info) {
+    return info ? `${info.imdbId}/${info.season}/${info.episode}` : '';
+  }
+
+  function cancelUpNext() {
+    clearInterval(upNextTimer);
+    upNextTimer = null;
+    upNextEl.classList.remove('visible');
+  }
+
+  async function startUpNext() {
+    if (!current || current.isMovie || upNextTimer) return;
+    const key = epKey(current);
+    if (upNextDoneFor === key) return;
+    upNextDoneFor = key;
+
+    const playing = current;
+    const seasons = await getSeasons(playing.tmdbId);
+    const next    = neighbour(seasons, playing.season, playing.episode, 1);
+    if (!next || current !== playing) return; // last episode, or you've moved on
+
+    // Leave the player's fullscreen so the countdown and buttons can be seen
+    if (document.fullscreenElement) { try { await document.exitFullscreen(); } catch {} }
+
+    let left = UP_NEXT_SECS;
+    upNextTitle.textContent = `Season ${next.season} · Episode ${next.episode}`;
+    upNextCount.textContent = left;
+    upNextEl.classList.add('visible');
+
+    upNextTimer = setInterval(() => {
+      left--;
+      if (left <= 0) { cancelUpNext(); step(1); }
+      else upNextCount.textContent = left;
+    }, 1000);
+  }
+
+  document.getElementById('upNextPlay').addEventListener('click', () => { cancelUpNext(); step(1); });
+  document.getElementById('upNextCancel').addEventListener('click', cancelUpNext);
+
   function play(info) {
+    cancelUpNext();
+    upNextDoneFor = null;
     current = info;
 
     let url = info.isMovie
@@ -818,10 +919,23 @@
     });
 
     // Refresh the Continue watching times when you pause or finish
-    if (d.player_status === 'paused' || d.player_status === 'ended') renderContinue();
+    const status = String(d.player_status || '').toLowerCase();
+    if (status === 'paused' || status === 'ended') renderContinue();
+
+    // Episode over? Start the "Up next" countdown.
+    const haveDur = isFinite(dur) && dur > 0;
+    const ended   = status === 'ended' || status === 'complete' || status === 'completed' ||
+                    (haveDur && pos >= dur - 1.5);
+    if (ended) {
+      startUpNext();
+    } else if (upNextTimer && haveDur && pos < dur - 5 &&
+               (status === 'playing' || status === 'seeked')) {
+      cancelUpNext(); // you skipped back to rewatch something
+    }
   });
 
   function closePlayer() {
+    cancelUpNext();
     playerFrame.src = 'about:blank';
     playerEl.classList.remove('visible');
     document.body.classList.remove('playing');
