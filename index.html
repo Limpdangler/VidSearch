@@ -1018,7 +1018,7 @@
 
   // Did a swap fail on this device before? Then don't try again (stay with the player's fullscreen).
   function swapDisabled() {
-    try { return localStorage.getItem('vs_fs_swap_failed') === '1'; } catch { return false; }
+    try { return localStorage.getItem('vs_fs_swap_failed2') === '1'; } catch { return false; }
   }
 
   // The player's own fullscreen only enlarges the video, hiding the Up next box.
@@ -1026,8 +1026,10 @@
   // because browsers refuse fullscreen otherwise.
   async function swapToOurFullscreen() {
     if (swapping || swapDisabled()) return;
+    // If the browser can tell us you didn't just tap, don't try (it would be refused).
+    // If it can't tell us at all, try anyway — a refusal is remembered below.
     const ua = navigator.userActivation;
-    if (!ua || !ua.isActive) return; // can't be sure it'd be allowed — leave it as the player's
+    if (ua && !ua.isActive) return;
 
     swapping = true;
     try {
@@ -1035,7 +1037,7 @@
       await frameWrap.requestFullscreen();
       try { await screen.orientation.lock('landscape'); } catch {}
     } catch {
-      try { localStorage.setItem('vs_fs_swap_failed', '1'); } catch {}
+      try { localStorage.setItem('vs_fs_swap_failed2', '1'); } catch {}
     }
     swapping = false;
     wasOurFullscreen = document.fullscreenElement === frameWrap;
