@@ -86,28 +86,7 @@
     border-radius: 0;
   }
 
-  .player-frame:fullscreen .up-next { top: 1rem; right: 4.2rem; }
-
-  /* Exit-fullscreen button (top-right, only in our fullscreen while controls show) */
-  .fs-exit {
-    position: absolute;
-    top: 1rem;
-    right: 1rem;
-    width: 2.6rem;
-    height: 2.6rem;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    background: rgba(10, 10, 10, 0.8);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text);
-    cursor: pointer;
-  }
-
-  .fs-exit svg { width: 1.2rem; height: 1.2rem; }
-
-  .player-frame:fullscreen.controls-visible .fs-exit { display: flex; }
+  .player-frame:fullscreen .up-next { top: 1rem; right: 1rem; }
 
   #fsBtn { display: flex; align-items: center; justify-content: center; }
   #fsBtn svg { width: 1.1rem; height: 1.1rem; }
@@ -520,10 +499,6 @@
 <div id="player" class="player">
   <div class="player-frame">
     <iframe id="playerFrame" allowfullscreen allow="autoplay; fullscreen; encrypted-media; picture-in-picture"></iframe>
-    <!-- Exit button: only shown in our fullscreen, while the player's controls are showing -->
-    <button id="fsExit" class="fs-exit" title="Exit fullscreen">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
-    </button>
     <!-- Up next box: appears in the corner near the end of an episode -->
     <div id="upNext" class="up-next">
       <div class="up-next-text">
@@ -963,15 +938,7 @@
 
     let msg = e.data;
     if (typeof msg === 'string') { try { msg = JSON.parse(msg); } catch { return; } }
-    if (!msg) return;
-
-    // Player controls shown/hidden: show/hide our exit-fullscreen button with them
-    if (msg.type === 'PLAYER_UI') {
-      frameWrap.classList.toggle('controls-visible', !!msg.visible);
-      return;
-    }
-
-    if (msg.type !== 'PLAYER_EVENT' || !msg.data) return;
+    if (!msg || msg.type !== 'PLAYER_EVENT' || !msg.data) return;
 
     const d = msg.data;
     const pos = Number(d.player_progress);
@@ -1033,7 +1000,6 @@
       if (document.fullscreenElement) {
         await exitAllFullscreen();
       } else {
-        frameWrap.classList.add('controls-visible'); // show the exit button straight away
         await frameWrap.requestFullscreen();
         // On phones, turn sideways like a normal video player
         try { await screen.orientation.lock('landscape'); } catch {}
@@ -1077,9 +1043,7 @@
 
   prevBtn.addEventListener('click', () => step(-1));
   nextBtn.addEventListener('click', () => step(1));
-  document.getElementById('fsBtn').addEventListener('click', toggleFullscreen);
-  document.getElementById('fsExit').addEventListener('click', exitAllFullscreen);
-  closeBtn.addEventListener('click', closePlayer);
+  document.getElementById('fsBtn').addEventListener('click', toggleFullscreen);  closeBtn.addEventListener('click', closePlayer);
 
   // Keyboard shortcuts — only when the player is open and you're not typing
   document.addEventListener('keydown', e => {
