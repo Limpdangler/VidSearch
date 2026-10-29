@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <!-- ✏️ TAGLINE: change the words between the quotes. Keep the quotes and the semicolon. -->
-<script>const TAGLINE = "The first and only streaming site to condemn 9/11";</script>
+<script>const TAGLINE = "The first and only streaming site to publicly condemn 9/11";</script>
 
 <title>Vid Search</title>
 <link rel="icon" type="image/png" sizes="32x32" href="icon-32.png">
@@ -789,9 +789,10 @@
     upNextEl.classList.remove('visible');
   }
 
-  function goNext() {
+  // autoplay = true when you tapped Next, false when the countdown ran out by itself
+  function goNext(autoplay) {
     cancelUpNext();
-    step(1);
+    step(1, { autoplay });
   }
 
   async function startUpNext(secondsLeft) {
@@ -817,12 +818,12 @@
     upNextTimer = setInterval(() => {
       if (upNextPaused) return;
       upNextLeft--;
-      if (upNextLeft <= 0) goNext();
+      if (upNextLeft <= 0) goNext(false); // nobody tapped: load it, but don't start playing
       else upNextCount.textContent = upNextLeft;
     }, 1000);
   }
 
-  document.getElementById('upNextPlay').addEventListener('click', goNext);
+  document.getElementById('upNextPlay').addEventListener('click', () => goNext(true));
   document.getElementById('upNextCancel').addEventListener('click', () => {
     upNextDoneFor = epKey(current);
     cancelUpNext();
@@ -840,7 +841,16 @@
     // Ask the player to start where you left off.
     // startAt is vidsrc's name for it; progress is a common alternative — players ignore names they don't know.
     const startAt = Math.floor(info.startAt || 0);
-    if (startAt > 0) url += `?startAt=${startAt}&progress=${startAt}`;
+    const params  = [];
+    if (startAt > 0) params.push(`startAt=${startAt}`, `progress=${startAt}`);
+
+    // Tell the player whether to start playing by itself.
+    // Anything you tap = play; the Up next countdown running out = wait for you.
+    // Two spellings because different players use different ones.
+    const autoplay = info.autoplay !== false;
+    params.push(`autoplay=${autoplay ? 1 : 0}`, `autoPlay=${autoplay}`);
+
+    url += '?' + params.join('&');
 
     playerFrame.src = url;
     npTitle.textContent = info.title;
@@ -887,12 +897,15 @@
     nextBtn.disabled = !neighbour(seasons, playing.season, playing.episode, 1);
   }
 
-  async function step(dir) {
+  async function step(dir, opts = {}) {
     if (!current || current.isMovie) return;
     const seasons = await getSeasons(current.tmdbId);
     const target  = neighbour(seasons, current.season, current.episode, dir);
     if (!target) return;
-    play({ ...current, season: target.season, episode: target.episode, startAt: 0 });
+    play({
+      ...current, season: target.season, episode: target.episode, startAt: 0,
+      autoplay: opts.autoplay !== false
+    });
   }
 
   // ── Listen to the player's position reports ─────────────────
@@ -951,7 +964,7 @@
 
     if (ended) {
       // Episode finished: go now if the box was counting, otherwise show it briefly
-      if (upNextTimer) goNext();
+      if (upNextTimer) goNext(false);
       else startUpNext(5);
     } else if (remaining <= UP_NEXT_LEAD) {
       // Last 15 seconds: show the box, kept in step with the real time left
