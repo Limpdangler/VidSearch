@@ -998,7 +998,7 @@
   async function toggleFullscreen() {
     try {
       if (document.fullscreenElement) {
-        await document.exitFullscreen();
+        await exitAllFullscreen();
       } else {
         await frameWrap.requestFullscreen();
         // On phones, turn sideways like a normal video player
@@ -1007,15 +1007,34 @@
     } catch {}
   }
 
+  async function exitAllFullscreen() {
+    for (let i = 0; i < 3 && document.fullscreenElement; i++) {
+      try { await document.exitFullscreen(); } catch { break; }
+    }
+  }
+
+  let wasOurFullscreen = false;
+
   document.addEventListener('fullscreenchange', () => {
-    if (!document.fullscreenElement) {
+    const el = document.fullscreenElement;
+
+    // In our fullscreen, the player's own fullscreen button tries to go "more" fullscreen.
+    // Treat that tap as "get me out" and leave fullscreen completely.
+    if (wasOurFullscreen && el === playerFrame) {
+      wasOurFullscreen = false;
+      exitAllFullscreen();
+      return;
+    }
+
+    wasOurFullscreen = el === frameWrap;
+    if (!el) {
       try { screen.orientation.unlock(); } catch {}
     }
   });
 
   function closePlayer() {
     cancelUpNext();
-    if (document.fullscreenElement) { try { document.exitFullscreen(); } catch {} }
+    exitAllFullscreen();
     playerFrame.src = 'about:blank';
     playerEl.classList.remove('visible');
     document.body.classList.remove('playing');
