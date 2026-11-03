@@ -673,10 +673,13 @@
         // VidRift takes TMDB ids. It auto-plays (muted) unless autoplay=0.
         // It has no start-time setting in the address: we send it a "resume" message instead.
         // hide= removes buttons from its control bar (they crowd/overlap on phones): lock, cast.
+        // fs=parent: its fullscreen button asks Vid Search to go fullscreen instead (our fullscreen
+        // keeps its tidy layout and the Up next box). We deliberately don't tell it it's fullscreen,
+        // because its own fullscreen layout is the one where the text overlaps.
         let url = info.isMovie
           ? `https://embed.vidrift.net/embed/movie/${info.tmdbId}`
           : `https://embed.vidrift.net/embed/tv/${info.tmdbId}/${info.season}/${info.episode}`;
-        const p = ['hide=lock,cast'];
+        const p = ['hide=lock,cast', 'fs=parent'];
         if (!autoplay) p.push('autoplay=0');
         return url + '?' + p.join('&');
       },
@@ -688,6 +691,7 @@
         if (!type.startsWith('vidrift:')) return null;
         const d = (msg.data && typeof msg.data === 'object') ? { ...msg, ...msg.data } : msg;
         const ev = type.slice(8);
+        if (ev === 'fullscreen') return { fullscreenRequest: true }; // its fullscreen button was pressed
         const map = { progress: 'playing', unpaused: 'playing', paused: 'paused', ended: 'ended' };
         const pos = num(d.currentTime), dur = num(d.duration);
         return {
@@ -1293,6 +1297,19 @@
     let u = null;
     try { u = src.read(msg); } catch {}
     if (!u) return;
+
+    // The player's fullscreen button: use our fullscreen instead (on/off).
+    // Must happen right here, while the browser still counts it as your tap.
+    if (u.fullscreenRequest) {
+      if (document.fullscreenElement) {
+        exitAllFullscreen();
+      } else {
+        frameWrap.requestFullscreen()
+          .then(() => { try { return screen.orientation.lock('landscape'); } catch {} })
+          .catch(() => {});
+      }
+      return;
+    }
 
     // The player moved to another episode by itself (its own Next button)
     if (u.episodeChange && !current.isMovie && u.season != null && u.episode != null &&
