@@ -151,7 +151,6 @@
 
   .src-btn.active { border-color: var(--accent); color: var(--text); background: rgba(229, 56, 59, 0.15); }
 
-  #srcStatus { margin-left: auto; font-variant-numeric: tabular-nums; }
 
   #fsBtn { display: flex; align-items: center; justify-content: center; }
   #fsBtn svg { width: 1.1rem; height: 1.1rem; }
@@ -219,13 +218,6 @@
     color: var(--muted);
   }
 
-  .player-hint {
-    margin-top: 0.5rem;
-    font-size: 0.72rem;
-    color: var(--muted);
-    text-align: center;
-    letter-spacing: 0.04em;
-  }
 
   .search-row {
     display: flex;
@@ -545,7 +537,6 @@
     body { padding: 1rem; }
     .search-row { gap: 0.5rem; }
     button#searchBtn { padding: 0 1rem; }
-    .player-hint { display: none; } /* no keyboard on a phone */
   }
 </style>
 </head>
@@ -603,9 +594,7 @@
   <div class="source-row">
     <span class="source-label">Source</span>
     <div id="sourceBtns" style="display:flex;gap:0.4rem;flex-wrap:wrap;"></div>
-    <span id="srcStatus"></span>
   </div>
-  <div class="player-hint" id="playerHint">Keys: N = next · B = previous (click outside the video first)</div>
 </div>
 
 <div id="continue"></div>
@@ -987,16 +976,8 @@
   const nextBtn     = document.getElementById('nextBtn');
   const closeBtn    = document.getElementById('closeBtn');  const npTitle     = document.getElementById('npTitle');
   const npEp        = document.getElementById('npEp');
-  const playerHint  = document.getElementById('playerHint');
-  const srcStatus   = document.getElementById('srcStatus');
   const sourceBtns  = document.getElementById('sourceBtns');
 
-  // 83 -> "1:23", 3725 -> "1:02:05"
-  function fmtClock(sec) {
-    sec = Math.floor(sec || 0);
-    const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
-    return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0');
-  }
 
   // Source buttons under the player. Switching reloads the same thing from the new
   // source, at the point you were at.
@@ -1240,7 +1221,6 @@
     }
 
     renderSourceBtns();
-    srcStatus.textContent = '';
     npTitle.textContent = info.title;
     npEp.textContent = info.isMovie ? 'Movie' : `Season ${info.season} · Episode ${info.episode}`;
 
@@ -1272,13 +1252,11 @@
       prevBtn.classList.add('hidden');
       nextBtn.classList.add('hidden');
       epJump.classList.add('hidden');
-      playerHint.style.display = 'none';
       return;
     }
     prevBtn.classList.remove('hidden');
     nextBtn.classList.remove('hidden');
     epJump.classList.remove('hidden');
-    playerHint.style.display = '';
 
     const playing = current;
     const seasons = await getSeasons(playing.tmdbId);
@@ -1408,7 +1386,6 @@
       if (u.episode != null && u.episode !== current.episode) return;
     }
 
-    srcStatus.textContent = `${fmtClock(pos)}${isFinite(dur) && dur > 0 ? ' / ' + fmtClock(dur) : ''}`;
 
     // Players report 0 for a moment while loading — don't let that wipe a saved spot
     const saved = getProgress(current.imdbId);
