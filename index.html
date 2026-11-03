@@ -291,6 +291,8 @@
     gap: 0.6rem;
   }
 
+  #results:not(:empty) { margin-bottom: 2rem; }
+
   .result-card {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -456,9 +458,10 @@
   #status {
     color: var(--muted);
     font-size: 0.85rem;
-    margin-top: 0.5rem;
-    min-height: 1.2em;
+    margin: -1rem 0 1rem;
   }
+
+  #status:empty { display: none; }
 
   /* Clear highlight on whatever the keyboard is pointing at (handy on a TV) */
   button:focus-visible, select:focus-visible {
@@ -495,6 +498,10 @@
   <button id="searchBtn">Search</button>
 </div>
 
+<!-- Search results sit right under the search bar -->
+<div id="status"></div>
+<div id="results"></div>
+
 <!-- Built-in player (hidden until something is played) -->
 <div id="player" class="player">
   <div class="player-frame">
@@ -525,9 +532,6 @@
 </div>
 
 <div id="continue"></div>
-
-<div id="status"></div>
-<div id="results"></div>
 
 <script>
   // ============================================
@@ -848,6 +852,11 @@
     upNextDoneFor = null;
     current = info;
 
+    // Something's been picked: clear the search results so the video sits at the top
+    searchId++; // also drops any search still loading
+    resultsDiv.innerHTML = '';
+    statusDiv.textContent = '';
+
     let url = info.isMovie
       ? STREAM_MOVIE + info.imdbId
       : `${STREAM_TV}${info.imdbId}/${info.season}/${info.episode}`;
@@ -1100,6 +1109,11 @@
     const query = queryInput.value.trim();
     if (!query) return;
 
+    // Searching while something's playing = you want something else.
+    // Close the player (your spot is saved in Continue watching) so results are at the top.
+    if (current) closePlayer();
+    document.body.classList.add('playing'); // compact header so results sit near the top
+
     const myId = ++searchId;
     resultsDiv.innerHTML = '';
     statusDiv.textContent = 'Searching...';
@@ -1163,7 +1177,7 @@
               <span>Episode</span>
             </div>
           </div>
-          <button class="ep-go-btn">Go</button>
+          <button class="ep-go-btn">Play</button>
         </div>
         <div class="ep-loading">Loading episodes...</div>
       </div>` : ''}
@@ -1222,17 +1236,12 @@
         epLoading.textContent = 'Could not load episode list.';
       });
 
-      // Stream button — show picker and stream current selection
+      // Stream button (shows) — open/close the episode picker; Play starts it
       streamBtn.addEventListener('click', () => {
-        epPicker.classList.add('visible');
-        if (!cachedImdbId) {
-          statusDiv.textContent = 'Still loading, try again in a second...';
-          return;
-        }
-        openStream(item, false, parseInt(sSel.value), parseInt(eSel.value), title, cachedImdbId);
+        epPicker.classList.toggle('visible');
       });
 
-      // Go button — change episode
+      // Play button — play the chosen episode
       goBtn.addEventListener('click', () => {
         if (!cachedImdbId) {
           statusDiv.textContent = 'Still loading, try again in a second...';
