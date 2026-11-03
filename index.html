@@ -88,6 +88,27 @@
 
   .player-frame:fullscreen .up-next { top: 1rem; right: 1rem; }
 
+  /* Skip intro / recap button: bottom-right, above the player's own controls */
+  .skip-btn {
+    position: absolute;
+    right: 0.6rem;
+    bottom: 3.6rem;
+    display: none;
+    background: rgba(10, 10, 10, 0.88);
+    color: var(--text);
+    border: 1px solid var(--text);
+    border-radius: 4px;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.05rem;
+    letter-spacing: 0.08em;
+    padding: 0.45rem 1rem;
+    cursor: pointer;
+  }
+
+  .skip-btn.visible { display: block; }
+  .skip-btn:hover { background: var(--text); color: #0a0a0a; }
+  .player-frame:fullscreen .skip-btn { right: 1.5rem; bottom: 5rem; font-size: 1.3rem; }
+
   #fsBtn { display: flex; align-items: center; justify-content: center; }
   #fsBtn svg { width: 1.1rem; height: 1.1rem; }
 
@@ -515,6 +536,8 @@
       <button id="upNextPlay" class="ctrl-btn">Next ›</button>
       <button id="upNextCancel" class="remove-btn" title="Cancel">✕</button>
     </div>
+    <!-- Skip intro / recap: appears during the intro when the timestamps are known -->
+    <button id="skipBtn" class="skip-btn">Skip intro</button>
   </div>
   <div class="now-playing">
     <div id="npTitle"></div>
@@ -847,10 +870,129 @@
     cancelUpNext();
   });
 
+  // ── Skip intro / recap ──────────────────────────────────────
+  // Timestamps come from free community databases:
+  //   1. TheIntroDB (looked up by TMDB id)   2. SkipDB (by IMDb id) as a backup.
+  // No data for an episode = no button. Nothing is sent except the show id + episode.
+  const skipBtn   = document.getElementById('skipBtn');
+  const skipCache = {};      // episode key -> [{ label, start, end }] (seconds)
+  let skipSegs    = [];      // segments for what's playing now
+  let skipFor     = '';      // which episode skipSegs belongs to
+  let lastPos     = 0;       // last position the player reported (seconds)
+  let lastPosAt   = 0;       // when it reported it
+  let isPlaying   = false;
+
+  // Accepts the slightly different shapes these APIs return
+  function toSecs(seg) {
+    if (!seg) return null;
+    if (Array.isArray(seg)) seg = seg[0];
+    if (!seg) return null;
+    let start, end;
+    if ('start_ms' in seg || 'end_ms' in seg) {
+      start = seg.start_ms == null ? 0 : seg.start_ms / 1000;
+      end   = seg.end_ms   == null ? null : seg.end_ms / 1000;
+    } else {
+      start = seg.start_sec ?? seg.start ?? 0;
+      end   = seg.end_sec   ?? seg.end   ?? null;
+    }
+    start = Number(start) || 0;
+    end   = Number(end);
+    // Ignore anything implausible (no end, backwards, or longer than 5 minutes)
+    if (!isFinite(end) || end <= start || end - start > 300) return null;
+    return { start, end };
+  }
+
+  function segsFrom(data) {
+    if (!data) return [];
+    const src = data.segments || data;
+    const out = [];
+    const recap = toSecs(src.recap);
+    const intro = toSecs(src.intro);
+    if (recap) out.push({ label: 'Skip recap', ...recap });
+    if (intro) out.push({ label: 'Skip intro', ...intro });
+    return out;
+  }
+
+  async function fetchJSON(url) {
+    const res = await Promise.race([
+      fetch(url),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 6000))
+    ]);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }
+
+  async function getSkipSegments(info) {
+    const key = epKey(info);
+    if (skipCache[key]) return skipCache[key];
+
+    let segs = [];
+    // 1) TheIntroDB, by TMDB id
+    for (const v of ['v4', 'v3']) {
+      if (segs.length) break;
+      try {
+        const data = await fetchJSON(`https://api.theintrodb.org/${v}/media?tmdb_id=${info.tmdbId}` +
+                                     `&season=${info.season}&episode=${info.episode}`);
+        segs = segsFrom(data);
+      } catch {}
+    }
+    // 2) SkipDB, by IMDb id
+    if (!segs.length) {
+      try {
+        const data = await fetchJSON(`https://api.skipdb.tv/api/segments?imdb_id=${info.imdbId}` +
+                                     `&season=${info.season}&episode=${info.episode}`);
+        segs = segsFrom(data);
+      } catch {}
+    }
+    skipCache[key] = segs;
+    return segs;
+  }
+
+  async function loadSkips(info) {
+    skipSegs = [];
+    skipFor  = epKey(info);
+    skipBtn.classList.remove('visible');
+    if (!info || info.isMovie) return;
+    const segs = await getSkipSegments(info);
+    if (epKey(current) === epKey(info)) skipSegs = segs;
+  }
+
+  // Where the video probably is right now (the player only reports every few seconds)
+  function estimatedPos() {
+    return isPlaying ? lastPos + (Date.now() - lastPosAt) / 1000 : lastPos;
+  }
+
+  function activeSkip() {
+    if (!current || skipFor !== epKey(current) || !skipSegs.length) return null;
+    const pos = estimatedPos();
+    // Show from the start of the segment until 2 seconds before it ends
+    return skipSegs.find(s => pos >= s.start - 0.5 && pos < s.end - 2) || null;
+  }
+
+  function updateSkipBtn() {
+    const seg = activeSkip();
+    if (seg) skipBtn.textContent = seg.label;
+    skipBtn.classList.toggle('visible', !!seg);
+  }
+
+  setInterval(updateSkipBtn, 500);
+
+  skipBtn.addEventListener('click', () => {
+    const seg = activeSkip();
+    if (!seg || !current) return;
+    skipBtn.classList.remove('visible');
+    // Reload the episode starting right after the intro/recap (same trick as resume)
+    play({ ...current, startAt: Math.ceil(seg.end), autoplay: true });
+  });
+
   function play(info) {
     cancelUpNext();
     upNextDoneFor = null;
     current = info;
+    lastPos = Math.floor(info.startAt || 0);
+    lastPosAt = Date.now();
+    isPlaying = false;
+    loadSkips(info);
 
     // Something's been picked: clear the search results so the video sits at the top
     searchId++; // also drops any search still loading
@@ -976,6 +1118,12 @@
     // Refresh the Continue watching times when you pause or finish
     const status = String(d.player_status || '').toLowerCase();
     if (status === 'paused' || status === 'ended') renderContinue();
+
+    // Keep track of where the video is, for the Skip intro button
+    lastPos   = pos;
+    lastPosAt = Date.now();
+    isPlaying = status === 'playing' || status === 'seeked' || status === 'timeupdate';
+    updateSkipBtn();
 
     // ── Up next box ──
     const haveDur   = isFinite(dur) && dur > 0;
