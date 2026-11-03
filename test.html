@@ -672,12 +672,16 @@
       url(info, startAt, autoplay) {
         // VidRift takes TMDB ids. It auto-plays (muted) unless autoplay=0.
         // It has no start-time setting in the address: we send it a "resume" message instead.
+        // hide= removes buttons from its control bar (they crowd/overlap on phones): lock, cast.
         let url = info.isMovie
           ? `https://embed.vidrift.net/embed/movie/${info.tmdbId}`
           : `https://embed.vidrift.net/embed/tv/${info.tmdbId}/${info.season}/${info.episode}`;
-        return autoplay ? url : url + '?autoplay=0';
+        const p = ['hide=lock,cast'];
+        if (!autoplay) p.push('autoplay=0');
+        return url + '?' + p.join('&');
       },
       startAtByMessage: true,
+      builtInSkip: true, // has its own Skip intro button, so ours stays hidden
       // Messages: vidrift:progress (currentTime, duration), vidrift:paused / unpaused, vidrift:ended, vidrift:episode
       read(msg) {
         const type = String(msg.type || '');
@@ -1151,7 +1155,9 @@
   }
 
   function updateSkipBtn() {
-    const seg = activeSkip();
+    // Sources with their own Skip button (VidRift) don't need ours as well
+    const src = current && SOURCES[current.sourceKey || getSourceKey()];
+    const seg = src && src.builtInSkip ? null : activeSkip();
     if (seg) skipBtn.textContent = seg.label;
     skipBtn.classList.toggle('visible', !!seg);
   }
