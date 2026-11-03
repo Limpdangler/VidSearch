@@ -1313,11 +1313,16 @@
     fillEpisodes(season, episode);
   }
 
-  // Changing season just lists its episodes; picking an episode plays it
+  // Picking a season plays its Episode 1; picking an episode plays that episode
   jumpSeason.addEventListener('change', () => {
-    const s = parseInt(jumpSeason.value);
-    const same = current && s === current.season;
-    fillEpisodes(s, same ? current.episode : null);
+    if (!current || current.isMovie) return;
+    const season = parseInt(jumpSeason.value);
+    if (season === current.season) { fillEpisodes(season, current.episode); return; }
+    fillEpisodes(season, 1);
+    play({
+      ...current, season, episode: 1, autoplay: true,
+      startAt: resumePoint(getProgress(current.imdbId), season, 1)
+    });
   });
 
   jumpEpisode.addEventListener('change', () => {
