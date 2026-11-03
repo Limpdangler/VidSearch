@@ -110,6 +110,22 @@
   .player-frame:fullscreen .skip-btn { right: 1.5rem; bottom: 5rem; font-size: 1.3rem; }
 
   /* Source switch (vidsrc / VidNest / VidRift) */
+  /* Season / episode drop-downs under Prev / Next */
+  .ep-jump {
+    display: flex;
+    gap: 0.6rem;
+    margin-top: 0.6rem;
+  }
+
+  .ep-jump.hidden { display: none; }
+
+  .ep-jump select {
+    flex: 1;
+    max-width: none;
+    font-size: 0.95rem;
+    padding: 0.5rem 0.6rem;
+  }
+
   .source-row {
     display: flex;
     align-items: center;
@@ -579,6 +595,11 @@
     </button>
     <button id="closeBtn" class="ctrl-btn ghost" title="Close player">✕</button>
   </div>
+  <!-- Season / episode drop-downs (TV only). Picking an episode plays it. -->
+  <div class="ep-jump" id="epJump">
+    <select id="jumpSeason" aria-label="Season"></select>
+    <select id="jumpEpisode" aria-label="Episode"></select>
+  </div>
   <div class="source-row">
     <span class="source-label">Source</span>
     <div id="sourceBtns" style="display:flex;gap:0.4rem;flex-wrap:wrap;"></div>
@@ -672,14 +693,15 @@
       url(info, startAt, autoplay) {
         // VidRift takes TMDB ids. It auto-plays (muted) unless autoplay=0.
         // It has no start-time setting in the address: we send it a "resume" message instead.
-        // hide= removes buttons from its control bar (they crowd/overlap on phones): lock, cast.
+        // hide= removes buttons from its control bar (they crowd/overlap on phones): lock, cast,
+        // episodes (overlaps the time when the player is wide; Vid Search has its own drop-downs).
         // fs=parent: its fullscreen button asks Vid Search to go fullscreen instead (our fullscreen
         // keeps its tidy layout and the Up next box). We deliberately don't tell it it's fullscreen,
         // because its own fullscreen layout is the one where the text overlaps.
         let url = info.isMovie
           ? `https://embed.vidrift.net/embed/movie/${info.tmdbId}`
           : `https://embed.vidrift.net/embed/tv/${info.tmdbId}/${info.season}/${info.episode}`;
-        const p = ['hide=lock,cast', 'fs=parent'];
+        const p = ['hide=lock,cast,episodes', 'fs=parent'];
         if (!autoplay) p.push('autoplay=0');
         return url + '?' + p.join('&');
       },
@@ -1249,11 +1271,13 @@
     if (!current || current.isMovie) {
       prevBtn.classList.add('hidden');
       nextBtn.classList.add('hidden');
+      epJump.classList.add('hidden');
       playerHint.style.display = 'none';
       return;
     }
     prevBtn.classList.remove('hidden');
     nextBtn.classList.remove('hidden');
+    epJump.classList.remove('hidden');
     playerHint.style.display = '';
 
     const playing = current;
@@ -1261,7 +1285,51 @@
     if (current !== playing) return; // user already moved on
     prevBtn.disabled = !neighbour(seasons, playing.season, playing.episode, -1);
     nextBtn.disabled = !neighbour(seasons, playing.season, playing.episode, 1);
+    fillEpisodeJump(seasons, playing.season, playing.episode);
   }
+
+  // ── Season / episode drop-downs ─────────────────────────────
+  const epJump      = document.getElementById('epJump');
+  const jumpSeason  = document.getElementById('jumpSeason');
+  const jumpEpisode = document.getElementById('jumpEpisode');
+  let jumpSeasons   = [];
+
+  function fillEpisodes(seasonNum, selectedEp) {
+    const s = jumpSeasons.find(x => x.n === seasonNum);
+    const count = s ? s.count : 0;
+    let html = selectedEp ? '' : '<option value="" selected disabled>Pick an episode</option>';
+    for (let i = 1; i <= count; i++) {
+      html += `<option value="${i}"${i === selectedEp ? ' selected' : ''}>Episode ${i}</option>`;
+    }
+    jumpEpisode.innerHTML = html;
+  }
+
+  // Show the season/episode that's playing
+  function fillEpisodeJump(seasons, season, episode) {
+    jumpSeasons = seasons;
+    jumpSeason.innerHTML = seasons.map(s =>
+      `<option value="${s.n}"${s.n === season ? ' selected' : ''}>Season ${s.n}</option>`
+    ).join('');
+    fillEpisodes(season, episode);
+  }
+
+  // Changing season just lists its episodes; picking an episode plays it
+  jumpSeason.addEventListener('change', () => {
+    const s = parseInt(jumpSeason.value);
+    const same = current && s === current.season;
+    fillEpisodes(s, same ? current.episode : null);
+  });
+
+  jumpEpisode.addEventListener('change', () => {
+    if (!current || current.isMovie || !jumpEpisode.value) return;
+    const season  = parseInt(jumpSeason.value);
+    const episode = parseInt(jumpEpisode.value);
+    if (season === current.season && episode === current.episode) return;
+    play({
+      ...current, season, episode, autoplay: true,
+      startAt: resumePoint(getProgress(current.imdbId), season, episode)
+    });
+  });
 
   async function step(dir, opts = {}) {
     if (!current || current.isMovie) return;
@@ -1513,7 +1581,7 @@
         return;
       }
 
-      statusDiv.textContent = `${results.length} result${results.length > 1 ? 's' : ''} — pick one:`;
+      statusDiv.textContent = `${results.length} result${results.length > 1 ? 's' : ''}`;
       results.forEach(item => renderCard(item));
 
     } catch (err) {
