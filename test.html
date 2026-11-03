@@ -109,6 +109,34 @@
   .skip-btn:hover { background: var(--text); color: #0a0a0a; }
   .player-frame:fullscreen .skip-btn { right: 1.5rem; bottom: 5rem; font-size: 1.3rem; }
 
+  /* Source switch (vidsrc / VidNest / VidRift) */
+  .source-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.6rem;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+
+  .source-label { text-transform: uppercase; letter-spacing: 0.1em; margin-right: 0.2rem; }
+
+  .src-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.8rem;
+    padding: 0.3rem 0.7rem;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+
+  .src-btn.active { border-color: var(--accent); color: var(--text); background: rgba(229, 56, 59, 0.15); }
+
+  #srcStatus { margin-left: auto; font-variant-numeric: tabular-nums; }
+
   #fsBtn { display: flex; align-items: center; justify-content: center; }
   #fsBtn svg { width: 1.1rem; height: 1.1rem; }
 
@@ -551,16 +579,12 @@
     </button>
     <button id="closeBtn" class="ctrl-btn ghost" title="Close player">✕</button>
   </div>
+  <div class="source-row">
+    <span class="source-label">Source</span>
+    <div id="sourceBtns" style="display:flex;gap:0.4rem;flex-wrap:wrap;"></div>
+    <span id="srcStatus"></span>
+  </div>
   <div class="player-hint" id="playerHint">Keys: N = next · B = previous (click outside the video first)</div>
-</div>
-
-
-<!-- TEST: try different "jump forward" commands on the player -->
-<div id="seekTest" style="width:100%;max-width:960px;margin:0 0 2rem;background:#111;border:1px dashed #e5383b;border-radius:4px;padding:0.75rem;font-family:monospace;font-size:0.8rem;color:#ccc;">
-  <div style="color:#e5383b;font-weight:bold;margin-bottom:0.4rem;">JUMP TEST: play a video, then tap each number. Watch if the video jumps forward ~60s.</div>
-  <div>Player says it's at: <b id="stPos" style="color:#fff">(nothing yet)</b></div>
-  <div id="stBtns" style="display:flex;flex-wrap:wrap;gap:0.4rem;margin:0.6rem 0;"></div>
-  <div id="stLog" style="color:#888;white-space:pre-wrap;"></div>
 </div>
 
 <div id="continue"></div>
@@ -579,6 +603,122 @@
   // ============================================
   let STREAM_MOVIE = 'https://vidsrc.sh/embed/movie/';
   let STREAM_TV    = 'https://vidsrc.sh/embed/tv/';
+
+  // ============================================
+  // VIDEO SOURCES
+  // Each source says: how to build its player address, how to read the messages
+  // its player sends, and (if it supports it) how to tell it to jump / play.
+  // Every reading is turned into the same shape: { status, pos, dur, season, episode }
+  // ============================================
+  const num = v => (v == null || v === '' || !isFinite(Number(v))) ? null : Number(v);
+
+  const SOURCES = {
+    vidsrc: {
+      name: 'vidsrc',
+      url(info, startAt, autoplay) {
+        let url = info.isMovie
+          ? STREAM_MOVIE + info.imdbId
+          : `${STREAM_TV}${info.imdbId}/${info.season}/${info.episode}`;
+        const p = [];
+        if (startAt > 0) p.push(`startAt=${startAt}`, `progress=${startAt}`);
+        p.push(`autoplay=${autoplay ? 1 : 0}`, `autoPlay=${autoplay}`);
+        return url + '?' + p.join('&');
+      },
+      // { type: "PLAYER_EVENT", data: { player_status, player_progress, player_duration, player_info } }
+      read(msg) {
+        if (msg.type !== 'PLAYER_EVENT' || !msg.data) return null;
+        const d = msg.data, pi = d.player_info || {};
+        return {
+          status: String(d.player_status || '').toLowerCase(),
+          pos: num(d.player_progress), dur: num(d.player_duration),
+          season: num(pi.season), episode: num(pi.episode)
+        };
+      }
+      // no controls
+    },
+
+    vidnest: {
+      name: 'VidNest',
+      url(info, startAt, autoplay) {
+        // VidNest takes TMDB ids. t = start time in seconds, autoplay=1 starts by itself.
+        let url = info.isMovie
+          ? `https://vidnest.pro/movie/${info.tmdbId}`
+          : `https://vidnest.pro/tv/${info.tmdbId}/${info.season}/${info.episode}`;
+        const p = [`autoplay=${autoplay ? 1 : 0}`];
+        if (startAt > 0) p.push(`t=${startAt}`);
+        return url + '?' + p.join('&');
+      },
+      // Messages are tagged source: 'vidnest-player'; events play/pause/seeked/ended/timeupdate,
+      // with currentTime + duration; 'episodechange' has season + episode.
+      read(msg) {
+        if (msg.source !== 'vidnest-player') return null;
+        const d = (msg.data && typeof msg.data === 'object') ? { ...msg, ...msg.data } : msg;
+        const ev = String(d.event || d.type || d.action || d.name || '').toLowerCase();
+        const map = { play: 'playing', playing: 'playing', timeupdate: 'playing', pause: 'paused',
+                      paused: 'paused', seeked: 'seeked', ended: 'ended', playerstatus: d.paused ? 'paused' : 'playing' };
+        return {
+          status: map[ev] || ev,
+          pos: num(d.currentTime ?? d.time), dur: num(d.duration),
+          season: num(d.season), episode: num(d.episode),
+          episodeChange: ev === 'episodechange'
+        };
+      },
+      seek(t) { sendToPlayer({ action: 'seek', time: t }); },
+      resume() { sendToPlayer({ action: 'play' }); }
+    },
+
+    vidrift: {
+      name: 'VidRift',
+      url(info, startAt, autoplay) {
+        // VidRift takes TMDB ids. It auto-plays (muted) unless autoplay=0.
+        // It has no start-time setting in the address: we send it a "resume" message instead.
+        let url = info.isMovie
+          ? `https://embed.vidrift.net/embed/movie/${info.tmdbId}`
+          : `https://embed.vidrift.net/embed/tv/${info.tmdbId}/${info.season}/${info.episode}`;
+        return autoplay ? url : url + '?autoplay=0';
+      },
+      startAtByMessage: true,
+      // Messages: vidrift:progress (currentTime, duration), vidrift:paused / unpaused, vidrift:ended, vidrift:episode
+      read(msg) {
+        const type = String(msg.type || '');
+        if (!type.startsWith('vidrift:')) return null;
+        const d = (msg.data && typeof msg.data === 'object') ? { ...msg, ...msg.data } : msg;
+        const ev = type.slice(8);
+        const map = { progress: 'playing', unpaused: 'playing', paused: 'paused', ended: 'ended' };
+        const pos = num(d.currentTime), dur = num(d.duration);
+        return {
+          status: map[ev] || ev,
+          pos: ev === 'ended' && pos == null ? dur : pos, dur,
+          season: num(d.season), episode: num(d.episode),
+          episodeChange: ev === 'episode'
+        };
+      },
+      seek(t) { sendToPlayer({ type: 'vidrift:resume', currentTime: t }); },
+      resume() { sendToPlayer({ type: 'vidrift:play' }); }
+    }
+  };
+
+  const DEFAULT_SOURCE = 'vidnest';
+
+  function getSourceKey() {
+    try {
+      const k = localStorage.getItem('vs_source');
+      if (k && SOURCES[k]) return k;
+    } catch {}
+    return DEFAULT_SOURCE;
+  }
+
+  function setSourceKey(k) {
+    try { localStorage.setItem('vs_source', k); } catch {}
+  }
+
+  // Send a command into the player (only to the site we loaded)
+  function sendToPlayer(msg) {
+    try {
+      const origin = new URL(document.getElementById('playerFrame').src).origin;
+      document.getElementById('playerFrame').contentWindow.postMessage(msg, origin);
+    } catch {}
+  }
 
   // Resolves when domain check is done (or failed) — openStream waits on this
   const domainReady = (async function autoUpdateDomain() {
@@ -818,6 +958,38 @@
   const closeBtn    = document.getElementById('closeBtn');  const npTitle     = document.getElementById('npTitle');
   const npEp        = document.getElementById('npEp');
   const playerHint  = document.getElementById('playerHint');
+  const srcStatus   = document.getElementById('srcStatus');
+  const sourceBtns  = document.getElementById('sourceBtns');
+
+  // 83 -> "1:23", 3725 -> "1:02:05"
+  function fmtClock(sec) {
+    sec = Math.floor(sec || 0);
+    const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+    return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0');
+  }
+
+  // Source buttons under the player. Switching reloads the same thing from the new
+  // source, at the point you were at.
+  function renderSourceBtns() {
+    const active = getSourceKey();
+    sourceBtns.innerHTML = '';
+    Object.entries(SOURCES).forEach(([key, s]) => {
+      const b = document.createElement('button');
+      b.className = 'src-btn' + (key === active ? ' active' : '');
+      b.textContent = s.name;
+      b.addEventListener('click', async () => {
+        if (key === getSourceKey()) return;
+        setSourceKey(key);
+        if (current) {
+          await domainReady;
+          play({ ...current, startAt: Math.floor(estimatedPos()), autoplay: true });
+        } else {
+          renderSourceBtns();
+        }
+      });
+      sourceBtns.appendChild(b);
+    });
+  }
 
   let current = null; // what's playing right now
 
@@ -990,8 +1162,18 @@
     const seg = activeSkip();
     if (!seg || !current) return;
     skipBtn.classList.remove('visible');
-    // Reload the episode starting right after the intro/recap (same trick as resume)
-    play({ ...current, startAt: Math.ceil(seg.end), autoplay: true });
+    const src = SOURCES[current.sourceKey || getSourceKey()];
+    const to  = Math.ceil(seg.end);
+
+    if (src.seek) {
+      // This player takes commands: jump straight there, no reload
+      src.seek(to);
+      if (src.resume) src.resume();
+      lastPos = to; lastPosAt = Date.now();
+    } else {
+      // vidsrc can't be told to jump: reload the episode from just after the intro
+      play({ ...current, startAt: to, autoplay: true });
+    }
   });
 
   function play(info) {
@@ -1008,25 +1190,25 @@
     resultsDiv.innerHTML = '';
     statusDiv.textContent = '';
 
-    let url = info.isMovie
-      ? STREAM_MOVIE + info.imdbId
-      : `${STREAM_TV}${info.imdbId}/${info.season}/${info.episode}`;
-
-    // Ask the player to start where you left off.
-    // startAt is vidsrc's name for it; progress is a common alternative — players ignore names they don't know.
-    const startAt = Math.floor(info.startAt || 0);
-    const params  = [];
-    if (startAt > 0) params.push(`startAt=${startAt}`, `progress=${startAt}`);
-
-    // Tell the player whether to start playing by itself.
-    // Anything you tap = play; the Up next countdown running out = wait for you.
-    // Two spellings because different players use different ones.
+    // Build the player address for the chosen source.
+    // startAt = where to start (resume); autoplay = start by itself
+    // (anything you tap = yes; the Up next countdown running out = no).
+    const startAt  = Math.floor(info.startAt || 0);
     const autoplay = info.autoplay !== false;
-    params.push(`autoplay=${autoplay ? 1 : 0}`, `autoPlay=${autoplay}`);
+    const src      = SOURCES[getSourceKey()];
+    current.sourceKey = getSourceKey();
 
-    url += '?' + params.join('&');
+    playerFrame.src = src.url(info, startAt, autoplay);
 
-    playerFrame.src = url;
+    // Sources without a start-time setting get told once the player has loaded
+    if (src.startAtByMessage && startAt > 0) {
+      playerFrame.addEventListener('load', () => {
+        if (current === info) src.seek(startAt);
+      }, { once: true });
+    }
+
+    renderSourceBtns();
+    srcStatus.textContent = '';
     npTitle.textContent = info.title;
     npEp.textContent = info.isMovie ? 'Movie' : `Season ${info.season} · Episode ${info.episode}`;
 
@@ -1090,27 +1272,47 @@
     if (!current) return;
 
     // Only trust messages from the player we loaded
-    let playerHost;
-    try { playerHost = new URL(playerFrame.src).hostname; } catch { return; }
-    let fromHost;
-    try { fromHost = new URL(e.origin).hostname; } catch { return; }
-    if (fromHost !== playerHost) return;
+    let fromOurPlayer = e.source === playerFrame.contentWindow;
+    if (!fromOurPlayer) {
+      try { fromOurPlayer = new URL(e.origin).hostname === new URL(playerFrame.src).hostname; } catch {}
+    }
+    if (!fromOurPlayer) return;
 
     let msg = e.data;
     if (typeof msg === 'string') { try { msg = JSON.parse(msg); } catch { return; } }
-    if (!msg || msg.type !== 'PLAYER_EVENT' || !msg.data) return;
+    if (!msg || typeof msg !== 'object') return;
 
-    const d = msg.data;
-    const pos = Number(d.player_progress);
-    const dur = Number(d.player_duration);
-    if (!isFinite(pos)) return;
+    // Translate this source's message into { status, pos, dur, season, episode }
+    const src = SOURCES[current.sourceKey || getSourceKey()];
+    let u = null;
+    try { u = src.read(msg); } catch {}
+    if (!u) return;
+
+    // The player moved to another episode by itself (its own Next button)
+    if (u.episodeChange && !current.isMovie && u.season != null && u.episode != null &&
+        (u.season !== current.season || u.episode !== current.episode)) {
+      current = { ...current, season: u.season, episode: u.episode, startAt: 0 };
+      npEp.textContent = `Season ${u.season} · Episode ${u.episode}`;
+      upNextDoneFor = null;
+      cancelUpNext();
+      loadSkips(current);
+      saveProgress(current.imdbId, { ...current, pos: 0, dur: 0 });
+      updateNavButtons();
+      renderContinue();
+      return;
+    }
+
+    const pos = u.pos;
+    const dur = u.dur == null ? NaN : u.dur;
+    if (pos == null) return;
 
     // Ignore reports about a different episode (e.g. a late message after pressing Next)
-    const pi = d.player_info || {};
     if (!current.isMovie) {
-      if (pi.season != null && Number(pi.season) !== current.season) return;
-      if (pi.episode != null && Number(pi.episode) !== current.episode) return;
+      if (u.season != null && u.season !== current.season) return;
+      if (u.episode != null && u.episode !== current.episode) return;
     }
+
+    srcStatus.textContent = `${fmtClock(pos)}${isFinite(dur) && dur > 0 ? ' / ' + fmtClock(dur) : ''}`;
 
     // Players report 0 for a moment while loading — don't let that wipe a saved spot
     const saved = getProgress(current.imdbId);
@@ -1125,7 +1327,7 @@
     });
 
     // Refresh the Continue watching times when you pause or finish
-    const status = String(d.player_status || '').toLowerCase();
+    const status = u.status;
     if (status === 'paused' || status === 'ended') renderContinue();
 
     // Keep track of where the video is, for the Skip intro button
@@ -1448,57 +1650,6 @@
       statusDiv.textContent = 'Failed to open stream. Try again.';
     }
   }
-
-
-  // ── TEST: jump-forward command formats ─────────────────────
-  (function () {
-    let pos = 0;
-    const posEl = document.getElementById('stPos');
-    const logEl = document.getElementById('stLog');
-    window.addEventListener('message', e => {
-      let m = e.data;
-      if (typeof m === 'string') { try { m = JSON.parse(m); } catch { return; } }
-      if (m && m.type === 'PLAYER_EVENT' && m.data && isFinite(+m.data.player_progress)) {
-        pos = +m.data.player_progress;
-        posEl.textContent = fmt(pos) + '  (' + (m.data.player_status || '') + ')';
-      }
-    });
-    function fmt(s) { s = Math.floor(s); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
-    // Every format also carries the time under several common names
-    const T = t => ({ time: t, currentTime: t, seconds: t, value: t, position: t, seek: t });
-    const formats = [
-      t => ({ type: 'PLAYER_COMMAND', command: 'seek', ...T(t) }),
-      t => ({ type: 'PLAYER_COMMAND', action: 'seek', ...T(t) }),
-      t => ({ type: 'PLAYER_COMMAND', data: { command: 'seek', action: 'seek', ...T(t) } }),
-      t => ({ type: 'seek', ...T(t) }),
-      t => ({ type: 'SEEK', ...T(t) }),
-      t => ({ type: 'PLAYER_SEEK', ...T(t) }),
-      t => ({ action: 'seek', ...T(t) }),
-      t => ({ command: 'seek', ...T(t) }),
-      t => ({ method: 'setCurrentTime', value: t }),
-      t => ({ method: 'seekTo', value: t }),
-      t => ({ event: 'command', func: 'seekTo', args: [t, true] }),
-      t => ({ type: 'PLAYER_EVENT', data: { event: 'seek', ...T(t) } }),
-      t => ({ type: 'PLAYER_CONTROL', action: 'seek', ...T(t) }),
-      t => ({ type: 'control', action: 'seek', ...T(t) }),
-    ];
-    const box = document.getElementById('stBtns');
-    formats.forEach((f, i) => {
-      const b = document.createElement('button');
-      b.textContent = String(i + 1);
-      b.style.cssText = 'min-width:2.6rem;padding:0.5rem;background:#e5383b;color:#fff;border:none;border-radius:3px;font-size:1rem;cursor:pointer;';
-      b.addEventListener('click', () => {
-        const t = Math.floor(pos) + 60;
-        const msg = f(t);
-        try {
-          playerFrame.contentWindow.postMessage(msg, '*');                  // as an object
-          playerFrame.contentWindow.postMessage(JSON.stringify(msg), '*');  // and as text
-        } catch {}
-        logEl.textContent = 'Sent #' + (i + 1) + ' (jump to ' + fmt(t) + ')';
-      });
-      box.appendChild(b);
-    });
-  })();
 
   // Show the Continue watching row on page load
   renderContinue();
