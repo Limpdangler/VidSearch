@@ -109,6 +109,49 @@
   .skip-btn:hover { background: var(--text); color: #0a0a0a; }
   .player-frame:fullscreen .skip-btn { right: 1.5rem; bottom: 5rem; font-size: 1.3rem; }
 
+  /* Source switch (vidsrc / VidNest / VidRift) */
+  /* Season / episode drop-downs under Prev / Next */
+  .ep-jump {
+    display: flex;
+    gap: 0.6rem;
+    margin-top: 0.6rem;
+  }
+
+  .ep-jump.hidden { display: none; }
+
+  .ep-jump select {
+    flex: 1;
+    max-width: none;
+    font-size: 0.95rem;
+    padding: 0.5rem 0.6rem;
+  }
+
+  .source-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.6rem;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+
+  .source-label { text-transform: uppercase; letter-spacing: 0.1em; margin-right: 0.2rem; }
+
+  .src-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.8rem;
+    padding: 0.3rem 0.7rem;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+
+  .src-btn.active { border-color: var(--accent); color: var(--text); background: rgba(229, 56, 59, 0.15); }
+
+
   #fsBtn { display: flex; align-items: center; justify-content: center; }
   #fsBtn svg { width: 1.1rem; height: 1.1rem; }
 
@@ -175,13 +218,6 @@
     color: var(--muted);
   }
 
-  .player-hint {
-    margin-top: 0.5rem;
-    font-size: 0.72rem;
-    color: var(--muted);
-    text-align: center;
-    letter-spacing: 0.04em;
-  }
 
   .search-row {
     display: flex;
@@ -224,6 +260,27 @@
   button#searchBtn:hover { opacity: 0.85; }
 
   /* ── Continue watching ─────────────────────────── */
+  /* Sync between devices */
+  .sync-box {
+    width: 100%;
+    max-width: 560px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 2rem;
+  }
+
+  .sync-row { display: flex; gap: 0.5rem; }
+
+  .sync-row input[type="text"] {
+    font-size: 0.9rem;
+    padding: 0.55rem 0.8rem;
+  }
+
+  .sync-status { font-size: 0.78rem; color: var(--muted); }
+  .sync-status.ok { color: #6fcf8f; }
+  .sync-status.err { color: var(--accent); }
+
   #continue {
     width: 100%;
     max-width: 560px;
@@ -501,7 +558,6 @@
     body { padding: 1rem; }
     .search-row { gap: 0.5rem; }
     button#searchBtn { padding: 0 1rem; }
-    .player-hint { display: none; } /* no keyboard on a phone */
   }
 </style>
 </head>
@@ -551,10 +607,29 @@
     </button>
     <button id="closeBtn" class="ctrl-btn ghost" title="Close player">✕</button>
   </div>
-  <div class="player-hint" id="playerHint">Keys: N = next · B = previous (click outside the video first)</div>
+  <!-- Season / episode drop-downs (TV only). Picking an episode plays it. -->
+  <div class="ep-jump" id="epJump">
+    <select id="jumpSeason" aria-label="Season"></select>
+    <select id="jumpEpisode" aria-label="Episode"></select>
+  </div>
+  <div class="source-row">
+    <span class="source-label">Source</span>
+    <div id="sourceBtns" style="display:flex;gap:0.4rem;flex-wrap:wrap;"></div>
+  </div>
 </div>
 
 <div id="continue"></div>
+
+<!-- Sync between devices: type the same profile phrase on each device -->
+<div class="sync-box">
+  <div class="section-label">Sync between devices</div>
+  <div class="sync-row">
+    <input type="text" id="profileInput" placeholder="profile name, e.g. john123"
+           autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button id="profileSave" class="src-btn">Save</button>
+  </div>
+  <div id="syncStatus" class="sync-status"></div>
+</div>
 
 <script>
   // ============================================
@@ -570,6 +645,131 @@
   // ============================================
   let STREAM_MOVIE = 'https://vidsrc.sh/embed/movie/';
   let STREAM_TV    = 'https://vidsrc.sh/embed/tv/';
+
+  // ============================================
+  // VIDEO SOURCES
+  // Each source says: how to build its player address, how to read the messages
+  // its player sends, and (if it supports it) how to tell it to jump / play.
+  // Every reading is turned into the same shape: { status, pos, dur, season, episode }
+  // ============================================
+  const num = v => (v == null || v === '' || !isFinite(Number(v))) ? null : Number(v);
+
+  const SOURCES = {
+    vidsrc: {
+      name: 'vidsrc',
+      url(info, startAt, autoplay) {
+        let url = info.isMovie
+          ? STREAM_MOVIE + info.imdbId
+          : `${STREAM_TV}${info.imdbId}/${info.season}/${info.episode}`;
+        const p = [];
+        if (startAt > 0) p.push(`startAt=${startAt}`, `progress=${startAt}`);
+        p.push(`autoplay=${autoplay ? 1 : 0}`, `autoPlay=${autoplay}`);
+        return url + '?' + p.join('&');
+      },
+      // { type: "PLAYER_EVENT", data: { player_status, player_progress, player_duration, player_info } }
+      read(msg) {
+        if (msg.type !== 'PLAYER_EVENT' || !msg.data) return null;
+        const d = msg.data, pi = d.player_info || {};
+        return {
+          status: String(d.player_status || '').toLowerCase(),
+          pos: num(d.player_progress), dur: num(d.player_duration),
+          season: num(pi.season), episode: num(pi.episode)
+        };
+      }
+      // no controls
+    },
+
+    vidnest: {
+      name: 'VidNest',
+      url(info, startAt, autoplay) {
+        // VidNest takes TMDB ids. t = start time in seconds, autoplay=1 starts by itself.
+        let url = info.isMovie
+          ? `https://vidnest.pro/movie/${info.tmdbId}`
+          : `https://vidnest.pro/tv/${info.tmdbId}/${info.season}/${info.episode}`;
+        const p = [`autoplay=${autoplay ? 1 : 0}`];
+        if (startAt > 0) p.push(`t=${startAt}`);
+        return url + '?' + p.join('&');
+      },
+      // Messages are tagged source: 'vidnest-player'; events play/pause/seeked/ended/timeupdate,
+      // with currentTime + duration; 'episodechange' has season + episode.
+      read(msg) {
+        if (msg.source !== 'vidnest-player') return null;
+        const d = (msg.data && typeof msg.data === 'object') ? { ...msg, ...msg.data } : msg;
+        const ev = String(d.event || d.type || d.action || d.name || '').toLowerCase();
+        const map = { play: 'playing', playing: 'playing', timeupdate: 'playing', pause: 'paused',
+                      paused: 'paused', seeked: 'seeked', ended: 'ended', playerstatus: d.paused ? 'paused' : 'playing' };
+        return {
+          status: map[ev] || ev,
+          pos: num(d.currentTime ?? d.time), dur: num(d.duration),
+          season: num(d.season), episode: num(d.episode),
+          episodeChange: ev === 'episodechange'
+        };
+      },
+      seek(t) { sendToPlayer({ action: 'seek', time: t }); },
+      resume() { sendToPlayer({ action: 'play' }); }
+    },
+
+    vidrift: {
+      name: 'VidRift',
+      url(info, startAt, autoplay) {
+        // VidRift takes TMDB ids. It auto-plays (muted) unless autoplay=0.
+        // It has no start-time setting in the address: we send it a "resume" message instead.
+        // hide= removes buttons from its control bar (they crowd/overlap on phones): lock, cast,
+        // episodes (overlaps the time when the player is wide; Vid Search has its own drop-downs).
+        // fs=parent: its fullscreen button asks Vid Search to go fullscreen instead (our fullscreen
+        // keeps its tidy layout and the Up next box). We deliberately don't tell it it's fullscreen,
+        // because its own fullscreen layout is the one where the text overlaps.
+        let url = info.isMovie
+          ? `https://embed.vidrift.net/embed/movie/${info.tmdbId}`
+          : `https://embed.vidrift.net/embed/tv/${info.tmdbId}/${info.season}/${info.episode}`;
+        const p = ['hide=lock,cast,episodes', 'fs=parent'];
+        if (!autoplay) p.push('autoplay=0');
+        return url + '?' + p.join('&');
+      },
+      startAtByMessage: true,
+      builtInSkip: true, // has its own Skip intro button, so ours stays hidden
+      // Messages: vidrift:progress (currentTime, duration), vidrift:paused / unpaused, vidrift:ended, vidrift:episode
+      read(msg) {
+        const type = String(msg.type || '');
+        if (!type.startsWith('vidrift:')) return null;
+        const d = (msg.data && typeof msg.data === 'object') ? { ...msg, ...msg.data } : msg;
+        const ev = type.slice(8);
+        if (ev === 'fullscreen') return { fullscreenRequest: true }; // its fullscreen button was pressed
+        const map = { progress: 'playing', unpaused: 'playing', paused: 'paused', ended: 'ended' };
+        const pos = num(d.currentTime), dur = num(d.duration);
+        return {
+          status: map[ev] || ev,
+          pos: ev === 'ended' && pos == null ? dur : pos, dur,
+          season: num(d.season), episode: num(d.episode),
+          episodeChange: ev === 'episode'
+        };
+      },
+      seek(t) { sendToPlayer({ type: 'vidrift:resume', currentTime: t }); },
+      resume() { sendToPlayer({ type: 'vidrift:play' }); }
+    }
+  };
+
+  const DEFAULT_SOURCE = 'vidnest';
+
+  function getSourceKey() {
+    try {
+      const k = localStorage.getItem('vs_source');
+      if (k && SOURCES[k]) return k;
+    } catch {}
+    return DEFAULT_SOURCE;
+  }
+
+  function setSourceKey(k) {
+    try { localStorage.setItem('vs_source', k); } catch {}
+  }
+
+  // Send a command into the player (only to the site we loaded)
+  function sendToPlayer(msg) {
+    try {
+      const origin = new URL(document.getElementById('playerFrame').src).origin;
+      document.getElementById('playerFrame').contentWindow.postMessage(msg, origin);
+    } catch {}
+  }
 
   // Resolves when domain check is done (or failed) — openStream waits on this
   const domainReady = (async function autoUpdateDomain() {
@@ -629,6 +829,7 @@
         dur:     info.dur || 0
       }));
     } catch {}
+    if (typeof scheduleSync === 'function') scheduleSync();
   }
 
   // "Finished" = within the last 5% (end credits)
@@ -654,6 +855,19 @@
 
   function removeProgress(imdbId) {
     try { localStorage.removeItem('vs_progress_' + imdbId); } catch {}
+    // Remember the removal so it syncs to your other devices too
+    const removed = getRemoved();
+    removed[imdbId] = Date.now();
+    setRemoved(removed);
+    if (typeof scheduleSync === 'function') scheduleSync(1000);
+  }
+
+  function getRemoved() {
+    try { return JSON.parse(localStorage.getItem('vs_removed') || '{}') || {}; } catch { return {}; }
+  }
+
+  function setRemoved(obj) {
+    try { localStorage.setItem('vs_removed', JSON.stringify(obj)); } catch {}
   }
 
   // All saved shows, most recently watched first
@@ -808,7 +1022,31 @@
   const nextBtn     = document.getElementById('nextBtn');
   const closeBtn    = document.getElementById('closeBtn');  const npTitle     = document.getElementById('npTitle');
   const npEp        = document.getElementById('npEp');
-  const playerHint  = document.getElementById('playerHint');
+  const sourceBtns  = document.getElementById('sourceBtns');
+
+
+  // Source buttons under the player. Switching reloads the same thing from the new
+  // source, at the point you were at.
+  function renderSourceBtns() {
+    const active = getSourceKey();
+    sourceBtns.innerHTML = '';
+    Object.entries(SOURCES).forEach(([key, s]) => {
+      const b = document.createElement('button');
+      b.className = 'src-btn' + (key === active ? ' active' : '');
+      b.textContent = s.name;
+      b.addEventListener('click', async () => {
+        if (key === getSourceKey()) return;
+        setSourceKey(key);
+        if (current) {
+          await domainReady;
+          play({ ...current, startAt: Math.floor(estimatedPos()), autoplay: true });
+        } else {
+          renderSourceBtns();
+        }
+      });
+      sourceBtns.appendChild(b);
+    });
+  }
 
   let current = null; // what's playing right now
 
@@ -970,7 +1208,9 @@
   }
 
   function updateSkipBtn() {
-    const seg = activeSkip();
+    // Sources with their own Skip button (VidRift) don't need ours as well
+    const src = current && SOURCES[current.sourceKey || getSourceKey()];
+    const seg = src && src.builtInSkip ? null : activeSkip();
     if (seg) skipBtn.textContent = seg.label;
     skipBtn.classList.toggle('visible', !!seg);
   }
@@ -981,8 +1221,18 @@
     const seg = activeSkip();
     if (!seg || !current) return;
     skipBtn.classList.remove('visible');
-    // Reload the episode starting right after the intro/recap (same trick as resume)
-    play({ ...current, startAt: Math.ceil(seg.end), autoplay: true });
+    const src = SOURCES[current.sourceKey || getSourceKey()];
+    const to  = Math.ceil(seg.end);
+
+    if (src.seek) {
+      // This player takes commands: jump straight there, no reload
+      src.seek(to);
+      if (src.resume) src.resume();
+      lastPos = to; lastPosAt = Date.now();
+    } else {
+      // vidsrc can't be told to jump: reload the episode from just after the intro
+      play({ ...current, startAt: to, autoplay: true });
+    }
   });
 
   function play(info) {
@@ -999,25 +1249,24 @@
     resultsDiv.innerHTML = '';
     statusDiv.textContent = '';
 
-    let url = info.isMovie
-      ? STREAM_MOVIE + info.imdbId
-      : `${STREAM_TV}${info.imdbId}/${info.season}/${info.episode}`;
-
-    // Ask the player to start where you left off.
-    // startAt is vidsrc's name for it; progress is a common alternative — players ignore names they don't know.
-    const startAt = Math.floor(info.startAt || 0);
-    const params  = [];
-    if (startAt > 0) params.push(`startAt=${startAt}`, `progress=${startAt}`);
-
-    // Tell the player whether to start playing by itself.
-    // Anything you tap = play; the Up next countdown running out = wait for you.
-    // Two spellings because different players use different ones.
+    // Build the player address for the chosen source.
+    // startAt = where to start (resume); autoplay = start by itself
+    // (anything you tap = yes; the Up next countdown running out = no).
+    const startAt  = Math.floor(info.startAt || 0);
     const autoplay = info.autoplay !== false;
-    params.push(`autoplay=${autoplay ? 1 : 0}`, `autoPlay=${autoplay}`);
+    const src      = SOURCES[getSourceKey()];
+    current.sourceKey = getSourceKey();
 
-    url += '?' + params.join('&');
+    playerFrame.src = src.url(info, startAt, autoplay);
 
-    playerFrame.src = url;
+    // Sources without a start-time setting get told once the player has loaded
+    if (src.startAtByMessage && startAt > 0) {
+      playerFrame.addEventListener('load', () => {
+        if (current === info) src.seek(startAt);
+      }, { once: true });
+    }
+
+    renderSourceBtns();
     npTitle.textContent = info.title;
     npEp.textContent = info.isMovie ? 'Movie' : `Season ${info.season} · Episode ${info.episode}`;
 
@@ -1048,19 +1297,68 @@
     if (!current || current.isMovie) {
       prevBtn.classList.add('hidden');
       nextBtn.classList.add('hidden');
-      playerHint.style.display = 'none';
+      epJump.classList.add('hidden');
       return;
     }
     prevBtn.classList.remove('hidden');
     nextBtn.classList.remove('hidden');
-    playerHint.style.display = '';
+    epJump.classList.remove('hidden');
 
     const playing = current;
     const seasons = await getSeasons(playing.tmdbId);
     if (current !== playing) return; // user already moved on
     prevBtn.disabled = !neighbour(seasons, playing.season, playing.episode, -1);
     nextBtn.disabled = !neighbour(seasons, playing.season, playing.episode, 1);
+    fillEpisodeJump(seasons, playing.season, playing.episode);
   }
+
+  // ── Season / episode drop-downs ─────────────────────────────
+  const epJump      = document.getElementById('epJump');
+  const jumpSeason  = document.getElementById('jumpSeason');
+  const jumpEpisode = document.getElementById('jumpEpisode');
+  let jumpSeasons   = [];
+
+  function fillEpisodes(seasonNum, selectedEp) {
+    const s = jumpSeasons.find(x => x.n === seasonNum);
+    const count = s ? s.count : 0;
+    let html = selectedEp ? '' : '<option value="" selected disabled>Pick an episode</option>';
+    for (let i = 1; i <= count; i++) {
+      html += `<option value="${i}"${i === selectedEp ? ' selected' : ''}>Episode ${i}</option>`;
+    }
+    jumpEpisode.innerHTML = html;
+  }
+
+  // Show the season/episode that's playing
+  function fillEpisodeJump(seasons, season, episode) {
+    jumpSeasons = seasons;
+    jumpSeason.innerHTML = seasons.map(s =>
+      `<option value="${s.n}"${s.n === season ? ' selected' : ''}>Season ${s.n}</option>`
+    ).join('');
+    fillEpisodes(season, episode);
+  }
+
+  // Picking a season plays its Episode 1; picking an episode plays that episode
+  jumpSeason.addEventListener('change', () => {
+    if (!current || current.isMovie) return;
+    const season = parseInt(jumpSeason.value);
+    if (season === current.season) { fillEpisodes(season, current.episode); return; }
+    fillEpisodes(season, 1);
+    play({
+      ...current, season, episode: 1, autoplay: true,
+      startAt: resumePoint(getProgress(current.imdbId), season, 1)
+    });
+  });
+
+  jumpEpisode.addEventListener('change', () => {
+    if (!current || current.isMovie || !jumpEpisode.value) return;
+    const season  = parseInt(jumpSeason.value);
+    const episode = parseInt(jumpEpisode.value);
+    if (season === current.season && episode === current.episode) return;
+    play({
+      ...current, season, episode, autoplay: true,
+      startAt: resumePoint(getProgress(current.imdbId), season, episode)
+    });
+  });
 
   async function step(dir, opts = {}) {
     if (!current || current.isMovie) return;
@@ -1081,27 +1379,59 @@
     if (!current) return;
 
     // Only trust messages from the player we loaded
-    let playerHost;
-    try { playerHost = new URL(playerFrame.src).hostname; } catch { return; }
-    let fromHost;
-    try { fromHost = new URL(e.origin).hostname; } catch { return; }
-    if (fromHost !== playerHost) return;
+    let fromOurPlayer = e.source === playerFrame.contentWindow;
+    if (!fromOurPlayer) {
+      try { fromOurPlayer = new URL(e.origin).hostname === new URL(playerFrame.src).hostname; } catch {}
+    }
+    if (!fromOurPlayer) return;
 
     let msg = e.data;
     if (typeof msg === 'string') { try { msg = JSON.parse(msg); } catch { return; } }
-    if (!msg || msg.type !== 'PLAYER_EVENT' || !msg.data) return;
+    if (!msg || typeof msg !== 'object') return;
 
-    const d = msg.data;
-    const pos = Number(d.player_progress);
-    const dur = Number(d.player_duration);
-    if (!isFinite(pos)) return;
+    // Translate this source's message into { status, pos, dur, season, episode }
+    const src = SOURCES[current.sourceKey || getSourceKey()];
+    let u = null;
+    try { u = src.read(msg); } catch {}
+    if (!u) return;
+
+    // The player's fullscreen button: use our fullscreen instead (on/off).
+    // Must happen right here, while the browser still counts it as your tap.
+    if (u.fullscreenRequest) {
+      if (document.fullscreenElement) {
+        exitAllFullscreen();
+      } else {
+        frameWrap.requestFullscreen()
+          .then(() => { try { return screen.orientation.lock('landscape'); } catch {} })
+          .catch(() => {});
+      }
+      return;
+    }
+
+    // The player moved to another episode by itself (its own Next button)
+    if (u.episodeChange && !current.isMovie && u.season != null && u.episode != null &&
+        (u.season !== current.season || u.episode !== current.episode)) {
+      current = { ...current, season: u.season, episode: u.episode, startAt: 0 };
+      npEp.textContent = `Season ${u.season} · Episode ${u.episode}`;
+      upNextDoneFor = null;
+      cancelUpNext();
+      loadSkips(current);
+      saveProgress(current.imdbId, { ...current, pos: 0, dur: 0 });
+      updateNavButtons();
+      renderContinue();
+      return;
+    }
+
+    const pos = u.pos;
+    const dur = u.dur == null ? NaN : u.dur;
+    if (pos == null) return;
 
     // Ignore reports about a different episode (e.g. a late message after pressing Next)
-    const pi = d.player_info || {};
     if (!current.isMovie) {
-      if (pi.season != null && Number(pi.season) !== current.season) return;
-      if (pi.episode != null && Number(pi.episode) !== current.episode) return;
+      if (u.season != null && u.season !== current.season) return;
+      if (u.episode != null && u.episode !== current.episode) return;
     }
+
 
     // Players report 0 for a moment while loading — don't let that wipe a saved spot
     const saved = getProgress(current.imdbId);
@@ -1116,7 +1446,7 @@
     });
 
     // Refresh the Continue watching times when you pause or finish
-    const status = String(d.player_status || '').toLowerCase();
+    const status = u.status;
     if (status === 'paused' || status === 'ended') renderContinue();
 
     // Keep track of where the video is, for the Skip intro button
@@ -1279,7 +1609,7 @@
         return;
       }
 
-      statusDiv.textContent = `${results.length} result${results.length > 1 ? 's' : ''} — pick one:`;
+      statusDiv.textContent = `${results.length} result${results.length > 1 ? 's' : ''}`;
       results.forEach(item => renderCard(item));
 
     } catch (err) {
@@ -1439,6 +1769,203 @@
       statusDiv.textContent = 'Failed to open stream. Try again.';
     }
   }
+
+  // ============================================
+  // SYNC BETWEEN DEVICES
+  // Type the same profile phrase on each device. The phrase is scrambled (SHA-256)
+  // into an address on MantleDB, a free no-sign-up JSON store, where a small note holds
+  // your progress. Each device keeps its own copy too, so if the service is down
+  // nothing breaks. Merging: for each show, whichever device saved it most recently wins.
+  // ============================================
+  const SYNC_BASE     = 'https://mantledb.sh/v2/';
+  const MAX_SYNCED    = 60;                    // keep the note small
+  const REMOVED_KEEP  = 90 * 24 * 3600 * 1000; // remember removals for 90 days
+  const profileInput  = document.getElementById('profileInput');
+  const profileSave   = document.getElementById('profileSave');
+  const syncStatus    = document.getElementById('syncStatus');
+
+  var syncUrl     = null;   // where this profile's note lives
+  var syncTimer   = null;
+  var syncRunning = false;
+  var syncAgain   = false;
+
+  function getProfile() {
+    try { return localStorage.getItem('vs_profile') || ''; } catch { return ''; }
+  }
+
+  function setStatus(text, kind) {
+    syncStatus.textContent = text;
+    syncStatus.className = 'sync-status' + (kind ? ' ' + kind : '');
+  }
+
+  async function addressFor(profile) {
+    const bytes = new TextEncoder().encode('vidsearch:' + profile);
+    const hash  = await crypto.subtle.digest('SHA-256', bytes);
+    const hex   = [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2, '0')).join('');
+    return `${SYNC_BASE}vs-${hex.slice(0, 32)}/progress`;
+  }
+
+  // Everything this device knows: { shows: { imdbId: record }, removed: { imdbId: time } }
+  function collectLocal() {
+    const shows = {};
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key || !key.startsWith('vs_progress_')) continue;
+        try {
+          const rec = JSON.parse(localStorage.getItem(key));
+          if (rec && rec.title && rec.tmdbId) shows[key.slice(12)] = rec;
+        } catch {}
+      }
+    } catch {}
+    return { shows, removed: getRemoved() };
+  }
+
+  function mergeNotes(a, b) {
+    const shows = {}, removed = {};
+    const now = Date.now();
+    for (const src of [a, b]) {
+      for (const [id, t] of Object.entries((src && src.removed) || {})) {
+        if (now - t < REMOVED_KEEP && (!removed[id] || t > removed[id])) removed[id] = t;
+      }
+      for (const [id, rec] of Object.entries((src && src.shows) || {})) {
+        if (!rec || !rec.title) continue;
+        if (!shows[id] || (rec.t || 0) > (shows[id].t || 0)) shows[id] = rec;
+      }
+    }
+    // A removal beats anything saved before it
+    for (const id of Object.keys(shows)) {
+      if (removed[id] && removed[id] >= (shows[id].t || 0)) delete shows[id];
+    }
+    // Keep only the most recent shows
+    const keep = Object.entries(shows).sort((x, y) => (y[1].t || 0) - (x[1].t || 0)).slice(0, MAX_SYNCED);
+    return { v: 1, shows: Object.fromEntries(keep), removed };
+  }
+
+  // Write the merged note into this device's storage. Returns true if anything changed.
+  function applyLocal(note) {
+    let changed = false;
+    const local = collectLocal();
+    for (const [id, rec] of Object.entries(note.shows)) {
+      const mine = local.shows[id];
+      if (!mine || (rec.t || 0) > (mine.t || 0)) {
+        try { localStorage.setItem('vs_progress_' + id, JSON.stringify(rec)); changed = true; } catch {}
+      }
+    }
+    for (const id of Object.keys(note.removed)) {
+      if (local.shows[id] && !note.shows[id]) {
+        try { localStorage.removeItem('vs_progress_' + id); changed = true; } catch {}
+      }
+    }
+    setRemoved(note.removed);
+    return changed;
+  }
+
+  // Compare two notes regardless of the order things are listed in
+  function sameNote(a, b) {
+    const canon = n => JSON.stringify({
+      shows: Object.keys(n.shows).sort().map(k => [k, n.shows[k].t, n.shows[k].pos, n.shows[k].season, n.shows[k].episode]),
+      removed: Object.keys(n.removed).sort().map(k => [k, n.removed[k]])
+    });
+    try { return canon(a) === canon(b); } catch { return false; }
+  }
+
+  async function readRemote() {
+    const res = await Promise.race([
+      fetch(syncUrl, { cache: 'no-store' }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000))
+    ]);
+    if (res.status === 404) return null;            // nothing saved yet
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const text = await res.text();
+    if (!text) return null;
+    let data = JSON.parse(text);
+    if (data && !data.shows && (data.value || data.data)) data = data.value || data.data;
+    return data && data.shows ? data : null;
+  }
+
+  async function writeRemote(note, leaving) {
+    const res = await fetch(syncUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(note),
+      keepalive: !!leaving   // lets the save finish even if the page is closing
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+  }
+
+  async function syncNow(leaving) {
+    if (!syncUrl) return;
+    if (syncRunning) { syncAgain = true; return; }
+    syncRunning = true;
+    clearTimeout(syncTimer); syncTimer = null;
+    try {
+      // Always read first, so we merge with the other devices rather than overwrite them
+      const remote = await readRemote();
+      const merged = mergeNotes(collectLocal(), remote);
+      const changedHere = applyLocal(merged);
+      if (!remote || !sameNote(merged, mergeNotes(remote, null))) {
+        await writeRemote(merged, leaving);
+      }
+      if (changedHere) renderContinue();
+      setStatus(`Syncing as "${getProfile()}" · up to date ✓`, 'ok');
+    } catch {
+      setStatus(`Syncing as "${getProfile()}" · couldn't reach the sync service, will retry`, 'err');
+      scheduleSync(60000);
+    }
+    syncRunning = false;
+    if (syncAgain) { syncAgain = false; scheduleSync(1000); }
+  }
+
+  // Sync a little later (batches the frequent progress saves while watching)
+  function scheduleSync(delay = 20000) {
+    if (!syncUrl) return;
+    if (syncTimer) {
+      if (delay >= 20000) return;          // a sync is already on the way
+      clearTimeout(syncTimer);
+    }
+    syncTimer = setTimeout(() => { syncTimer = null; syncNow(); }, delay);
+  }
+
+  async function startSync(profile) {
+    syncUrl = profile ? await addressFor(profile) : null;
+    if (!syncUrl) {
+      setStatus('Off: progress is only saved on this device. Type the same profile on each device to sync.');
+      return;
+    }
+    setStatus(`Syncing as "${profile}"…`);
+    syncNow();
+  }
+
+  profileSave.addEventListener('click', () => {
+    const p = profileInput.value.trim().toLowerCase();
+    try {
+      if (p) localStorage.setItem('vs_profile', p);
+      else localStorage.removeItem('vs_profile');
+    } catch {}
+    profileInput.value = p;
+    profileInput.blur();
+    startSync(p);
+  });
+
+  profileInput.addEventListener('keydown', e => { if (e.key === 'Enter') profileSave.click(); });
+
+  // Catch up when you come back to the page; save when you leave it
+  document.addEventListener('visibilitychange', () => {
+    if (!syncUrl) return;
+    if (document.visibilityState === 'visible') syncNow();
+    else syncNow(true);
+  });
+
+  // Pause / episode end: save soon
+  window.addEventListener('message', e => {
+    if (!syncUrl || e.source !== playerFrame.contentWindow) return;
+    const t = JSON.stringify(e.data || '');
+    if (/pause|ended/i.test(t)) scheduleSync(3000);
+  });
+
+  profileInput.value = getProfile();
+  startSync(getProfile());
 
   // Show the Continue watching row on page load
   renderContinue();
