@@ -624,7 +624,7 @@
 <div class="sync-box">
   <div class="section-label">Sync between devices</div>
   <div class="sync-row">
-    <input type="text" id="profileInput" placeholder="profile, e.g. calvin-pineapple"
+    <input type="text" id="profileInput" placeholder="profile name, e.g. mark12"
            autocomplete="off" autocapitalize="off" spellcheck="false">
     <button id="profileSave" class="src-btn">Save</button>
   </div>
@@ -1939,10 +1939,6 @@
 
   profileSave.addEventListener('click', () => {
     const p = profileInput.value.trim().toLowerCase();
-    if (p && p.length < 8) {
-      setStatus('Make it a bit longer (8+ characters), e.g. name-secretword, so nobody can guess it.', 'err');
-      return;
-    }
     try {
       if (p) localStorage.setItem('vs_profile', p);
       else localStorage.removeItem('vs_profile');
