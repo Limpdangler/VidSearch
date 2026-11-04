@@ -260,6 +260,27 @@
   button#searchBtn:hover { opacity: 0.85; }
 
   /* ── Continue watching ─────────────────────────── */
+  /* Sync between devices */
+  .sync-box {
+    width: 100%;
+    max-width: 560px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 2rem;
+  }
+
+  .sync-row { display: flex; gap: 0.5rem; }
+
+  .sync-row input[type="text"] {
+    font-size: 0.9rem;
+    padding: 0.55rem 0.8rem;
+  }
+
+  .sync-status { font-size: 0.78rem; color: var(--muted); }
+  .sync-status.ok { color: #6fcf8f; }
+  .sync-status.err { color: var(--accent); }
+
   #continue {
     width: 100%;
     max-width: 560px;
@@ -599,6 +620,17 @@
 
 <div id="continue"></div>
 
+<!-- Sync between devices: type the same profile phrase on each device -->
+<div class="sync-box">
+  <div class="section-label">Sync between devices</div>
+  <div class="sync-row">
+    <input type="text" id="profileInput" placeholder="profile, e.g. calvin-pineapple"
+           autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button id="profileSave" class="src-btn">Save</button>
+  </div>
+  <div id="syncStatus" class="sync-status"></div>
+</div>
+
 <script>
   // ============================================
   // TMDB API KEY
@@ -797,6 +829,7 @@
         dur:     info.dur || 0
       }));
     } catch {}
+    if (typeof scheduleSync === 'function') scheduleSync();
   }
 
   // "Finished" = within the last 5% (end credits)
@@ -822,6 +855,19 @@
 
   function removeProgress(imdbId) {
     try { localStorage.removeItem('vs_progress_' + imdbId); } catch {}
+    // Remember the removal so it syncs to your other devices too
+    const removed = getRemoved();
+    removed[imdbId] = Date.now();
+    setRemoved(removed);
+    if (typeof scheduleSync === 'function') scheduleSync(1000);
+  }
+
+  function getRemoved() {
+    try { return JSON.parse(localStorage.getItem('vs_removed') || '{}') || {}; } catch { return {}; }
+  }
+
+  function setRemoved(obj) {
+    try { localStorage.setItem('vs_removed', JSON.stringify(obj)); } catch {}
   }
 
   // All saved shows, most recently watched first
@@ -1723,6 +1769,207 @@
       statusDiv.textContent = 'Failed to open stream. Try again.';
     }
   }
+
+  // ============================================
+  // SYNC BETWEEN DEVICES
+  // Type the same profile phrase on each device. The phrase is scrambled (SHA-256)
+  // into an address on MantleDB, a free no-sign-up JSON store, where a small note holds
+  // your progress. Each device keeps its own copy too, so if the service is down
+  // nothing breaks. Merging: for each show, whichever device saved it most recently wins.
+  // ============================================
+  const SYNC_BASE     = 'https://mantledb.sh/v2/';
+  const MAX_SYNCED    = 60;                    // keep the note small
+  const REMOVED_KEEP  = 90 * 24 * 3600 * 1000; // remember removals for 90 days
+  const profileInput  = document.getElementById('profileInput');
+  const profileSave   = document.getElementById('profileSave');
+  const syncStatus    = document.getElementById('syncStatus');
+
+  var syncUrl     = null;   // where this profile's note lives
+  var syncTimer   = null;
+  var syncRunning = false;
+  var syncAgain   = false;
+
+  function getProfile() {
+    try { return localStorage.getItem('vs_profile') || ''; } catch { return ''; }
+  }
+
+  function setStatus(text, kind) {
+    syncStatus.textContent = text;
+    syncStatus.className = 'sync-status' + (kind ? ' ' + kind : '');
+  }
+
+  async function addressFor(profile) {
+    const bytes = new TextEncoder().encode('vidsearch:' + profile);
+    const hash  = await crypto.subtle.digest('SHA-256', bytes);
+    const hex   = [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2, '0')).join('');
+    return `${SYNC_BASE}vs-${hex.slice(0, 32)}/progress`;
+  }
+
+  // Everything this device knows: { shows: { imdbId: record }, removed: { imdbId: time } }
+  function collectLocal() {
+    const shows = {};
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key || !key.startsWith('vs_progress_')) continue;
+        try {
+          const rec = JSON.parse(localStorage.getItem(key));
+          if (rec && rec.title && rec.tmdbId) shows[key.slice(12)] = rec;
+        } catch {}
+      }
+    } catch {}
+    return { shows, removed: getRemoved() };
+  }
+
+  function mergeNotes(a, b) {
+    const shows = {}, removed = {};
+    const now = Date.now();
+    for (const src of [a, b]) {
+      for (const [id, t] of Object.entries((src && src.removed) || {})) {
+        if (now - t < REMOVED_KEEP && (!removed[id] || t > removed[id])) removed[id] = t;
+      }
+      for (const [id, rec] of Object.entries((src && src.shows) || {})) {
+        if (!rec || !rec.title) continue;
+        if (!shows[id] || (rec.t || 0) > (shows[id].t || 0)) shows[id] = rec;
+      }
+    }
+    // A removal beats anything saved before it
+    for (const id of Object.keys(shows)) {
+      if (removed[id] && removed[id] >= (shows[id].t || 0)) delete shows[id];
+    }
+    // Keep only the most recent shows
+    const keep = Object.entries(shows).sort((x, y) => (y[1].t || 0) - (x[1].t || 0)).slice(0, MAX_SYNCED);
+    return { v: 1, shows: Object.fromEntries(keep), removed };
+  }
+
+  // Write the merged note into this device's storage. Returns true if anything changed.
+  function applyLocal(note) {
+    let changed = false;
+    const local = collectLocal();
+    for (const [id, rec] of Object.entries(note.shows)) {
+      const mine = local.shows[id];
+      if (!mine || (rec.t || 0) > (mine.t || 0)) {
+        try { localStorage.setItem('vs_progress_' + id, JSON.stringify(rec)); changed = true; } catch {}
+      }
+    }
+    for (const id of Object.keys(note.removed)) {
+      if (local.shows[id] && !note.shows[id]) {
+        try { localStorage.removeItem('vs_progress_' + id); changed = true; } catch {}
+      }
+    }
+    setRemoved(note.removed);
+    return changed;
+  }
+
+  // Compare two notes regardless of the order things are listed in
+  function sameNote(a, b) {
+    const canon = n => JSON.stringify({
+      shows: Object.keys(n.shows).sort().map(k => [k, n.shows[k].t, n.shows[k].pos, n.shows[k].season, n.shows[k].episode]),
+      removed: Object.keys(n.removed).sort().map(k => [k, n.removed[k]])
+    });
+    try { return canon(a) === canon(b); } catch { return false; }
+  }
+
+  async function readRemote() {
+    const res = await Promise.race([
+      fetch(syncUrl, { cache: 'no-store' }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000))
+    ]);
+    if (res.status === 404) return null;            // nothing saved yet
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const text = await res.text();
+    if (!text) return null;
+    let data = JSON.parse(text);
+    if (data && !data.shows && (data.value || data.data)) data = data.value || data.data;
+    return data && data.shows ? data : null;
+  }
+
+  async function writeRemote(note, leaving) {
+    const res = await fetch(syncUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(note),
+      keepalive: !!leaving   // lets the save finish even if the page is closing
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+  }
+
+  async function syncNow(leaving) {
+    if (!syncUrl) return;
+    if (syncRunning) { syncAgain = true; return; }
+    syncRunning = true;
+    clearTimeout(syncTimer); syncTimer = null;
+    try {
+      // Always read first, so we merge with the other devices rather than overwrite them
+      const remote = await readRemote();
+      const merged = mergeNotes(collectLocal(), remote);
+      const changedHere = applyLocal(merged);
+      if (!remote || !sameNote(merged, mergeNotes(remote, null))) {
+        await writeRemote(merged, leaving);
+      }
+      if (changedHere) renderContinue();
+      setStatus(`Syncing as "${getProfile()}" · up to date ✓`, 'ok');
+    } catch {
+      setStatus(`Syncing as "${getProfile()}" · couldn't reach the sync service, will retry`, 'err');
+      scheduleSync(60000);
+    }
+    syncRunning = false;
+    if (syncAgain) { syncAgain = false; scheduleSync(1000); }
+  }
+
+  // Sync a little later (batches the frequent progress saves while watching)
+  function scheduleSync(delay = 20000) {
+    if (!syncUrl) return;
+    if (syncTimer) {
+      if (delay >= 20000) return;          // a sync is already on the way
+      clearTimeout(syncTimer);
+    }
+    syncTimer = setTimeout(() => { syncTimer = null; syncNow(); }, delay);
+  }
+
+  async function startSync(profile) {
+    syncUrl = profile ? await addressFor(profile) : null;
+    if (!syncUrl) {
+      setStatus('Off: progress is only saved on this device. Type the same profile on each device to sync.');
+      return;
+    }
+    setStatus(`Syncing as "${profile}"…`);
+    syncNow();
+  }
+
+  profileSave.addEventListener('click', () => {
+    const p = profileInput.value.trim().toLowerCase();
+    if (p && p.length < 8) {
+      setStatus('Make it a bit longer (8+ characters), e.g. name-secretword, so nobody can guess it.', 'err');
+      return;
+    }
+    try {
+      if (p) localStorage.setItem('vs_profile', p);
+      else localStorage.removeItem('vs_profile');
+    } catch {}
+    profileInput.value = p;
+    profileInput.blur();
+    startSync(p);
+  });
+
+  profileInput.addEventListener('keydown', e => { if (e.key === 'Enter') profileSave.click(); });
+
+  // Catch up when you come back to the page; save when you leave it
+  document.addEventListener('visibilitychange', () => {
+    if (!syncUrl) return;
+    if (document.visibilityState === 'visible') syncNow();
+    else syncNow(true);
+  });
+
+  // Pause / episode end: save soon
+  window.addEventListener('message', e => {
+    if (!syncUrl || e.source !== playerFrame.contentWindow) return;
+    const t = JSON.stringify(e.data || '');
+    if (/pause|ended/i.test(t)) scheduleSync(3000);
+  });
+
+  profileInput.value = getProfile();
+  startSync(getProfile());
 
   // Show the Continue watching row on page load
   renderContinue();
