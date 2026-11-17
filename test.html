@@ -718,7 +718,8 @@
         };
       },
       seek(t) { sendToPlayer({ action: 'seek', time: t }); },
-      resume() { sendToPlayer({ action: 'play' }); }
+      resume() { sendToPlayer({ action: 'play' }); },
+      pause() { sendToPlayer({ action: 'pause' }); }
     },
 
     vidrift: {
@@ -757,7 +758,8 @@
         };
       },
       seek(t) { sendToPlayer({ type: 'vidrift:resume', currentTime: t }); },
-      resume() { sendToPlayer({ type: 'vidrift:play' }); }
+      resume() { sendToPlayer({ type: 'vidrift:play' }); },
+      pause() { sendToPlayer({ type: 'vidrift:pause' }); }
     }
   };
 
@@ -1620,6 +1622,24 @@
   prevBtn.addEventListener('click', () => step(-1));
   nextBtn.addEventListener('click', () => step(1));
   document.getElementById('fsBtn').addEventListener('click', toggleFullscreen);
+
+  // For the Android app's picture-in-picture play/pause button.
+  // vsPipState(): '0' = nothing playing, otherwise 3 digits: open, playing, can-control
+  window.vsPipState = function () {
+    if (!current) return '0';
+    const src = SOURCES[current.sourceKey || getSourceKey()];
+    return '1' + (isPlaying ? '1' : '0') + (src.pause && src.resume ? '1' : '0');
+  };
+
+  window.vsPipToggle = function () {
+    if (!current) return 'none';
+    const src = SOURCES[current.sourceKey || getSourceKey()];
+    if (!src.pause || !src.resume) return 'none';   // e.g. vidsrc can't be told to pause
+    lastPos = estimatedPos(); lastPosAt = Date.now();
+    if (isPlaying) { src.pause(); isPlaying = false; }
+    else { src.resume(); isPlaying = true; }
+    return isPlaying ? 'playing' : 'paused';
+  };
 
   // Reload button: reloads only the player, at the point you were at.
   // Fixes a black/frozen video (e.g. after switching away from the app or tab).
