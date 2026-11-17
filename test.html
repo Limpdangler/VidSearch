@@ -13,6 +13,7 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0a0a0a">
+<meta name="mobile-web-app-capable" content="yes">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -150,6 +151,10 @@
   }
 
   .src-btn.active { border-color: var(--accent); color: var(--text); background: rgba(229, 56, 59, 0.15); }
+
+  /* Pop-up blocker switch: sits at the right end of the Source row */
+  .popup-btn { margin-left: auto; }
+  .popup-btn.on { border-color: #6fcf8f; color: #6fcf8f; }
 
 
   #fsBtn { display: flex; align-items: center; justify-content: center; }
@@ -615,6 +620,7 @@
   <div class="source-row">
     <span class="source-label">Source</span>
     <div id="sourceBtns" style="display:flex;gap:0.4rem;flex-wrap:wrap;"></div>
+    <button id="popupBtn" class="src-btn popup-btn" title="Stop the player opening pop-ups and new tabs"></button>
   </div>
 </div>
 
@@ -1046,7 +1052,42 @@
       });
       sourceBtns.appendChild(b);
     });
+    renderPopupBtn();
   }
+
+  // ── Pop-up blocker ──────────────────────────────────────────
+  // Puts the player in a "sandbox": it can still run and play video, but the browser
+  // won't let it open new tabs/windows or redirect Vid Search to another page —
+  // which is how most of these ads work. Some players refuse to play when sandboxed,
+  // so it can be switched off per source (remembered on this device). On by default.
+  const popupBtn = document.getElementById('popupBtn');
+  const SANDBOX_RULES = 'allow-scripts allow-same-origin allow-forms allow-presentation allow-orientation-lock';
+
+  function popupsBlocked(key) {
+    try { return localStorage.getItem('vs_block_popups_' + key) !== '0'; } catch { return true; }
+  }
+
+  function applySandbox(key) {
+    if (popupsBlocked(key)) playerFrame.setAttribute('sandbox', SANDBOX_RULES);
+    else playerFrame.removeAttribute('sandbox');
+  }
+
+  function renderPopupBtn() {
+    const on = popupsBlocked(getSourceKey());
+    popupBtn.textContent = on ? 'Pop-ups blocked ✓' : 'Pop-ups allowed';
+    popupBtn.classList.toggle('on', on);
+  }
+
+  popupBtn.addEventListener('click', async () => {
+    const key = getSourceKey();
+    try { localStorage.setItem('vs_block_popups_' + key, popupsBlocked(key) ? '0' : '1'); } catch {}
+    renderPopupBtn();
+    // The change only takes effect when the player reloads, so reload where you were
+    if (current) {
+      await domainReady;
+      play({ ...current, startAt: Math.floor(estimatedPos()), autoplay: true });
+    }
+  });
 
   let current = null; // what's playing right now
 
@@ -1257,6 +1298,7 @@
     const src      = SOURCES[getSourceKey()];
     current.sourceKey = getSourceKey();
 
+    applySandbox(getSourceKey()); // must be set before loading so it applies
     playerFrame.src = src.url(info, startAt, autoplay);
 
     // Sources without a start-time setting get told once the player has loaded
@@ -1969,6 +2011,13 @@
 
   // Show the Continue watching row on page load
   renderContinue();
+
+  // Switch on the app helper (sw.js) so the site can be installed as an app
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    });
+  }
 </script>
 </body>
 </html>
