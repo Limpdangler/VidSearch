@@ -157,8 +157,11 @@
   .popup-btn.on { border-color: #6fcf8f; color: #6fcf8f; }
 
 
-  #fsBtn { display: flex; align-items: center; justify-content: center; }
-  #fsBtn svg { width: 1.1rem; height: 1.1rem; }
+  #fsBtn, #reloadBtn { display: flex; align-items: center; justify-content: center; }
+  #fsBtn svg, #reloadBtn svg { width: 1.1rem; height: 1.1rem; }
+
+  /* The small icon buttons (reload, fullscreen, close) stay compact so all five fit on a phone */
+  .player-bar .ctrl-btn.ghost { flex: 0 0 2.9rem; padding: 0; display: flex; align-items: center; justify-content: center; }
 
   .player-frame iframe {
     position: absolute;
@@ -607,6 +610,9 @@
   <div class="player-bar">
     <button id="prevBtn" class="ctrl-btn">‹ Prev</button>
     <button id="nextBtn" class="ctrl-btn">Next ›</button>
+    <button id="reloadBtn" class="ctrl-btn ghost" title="Reload the player (fixes a black or frozen video)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>
+    </button>
     <button id="fsBtn" class="ctrl-btn ghost" title="Fullscreen (keeps the Up next box)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
     </button>
@@ -1063,7 +1069,12 @@
   const popupBtn = document.getElementById('popupBtn');
   const SANDBOX_RULES = 'allow-scripts allow-same-origin allow-forms allow-presentation allow-orientation-lock';
 
+  // Inside the Vid Search Android app, the app blocks pop-ups itself (undetectably),
+  // so the sandbox and its switch aren't needed there.
+  const IN_APP = /VidSearchApp\//.test(navigator.userAgent);
+
   function popupsBlocked(key) {
+    if (IN_APP) return false;
     try { return localStorage.getItem('vs_block_popups_' + key) !== '0'; } catch { return true; }
   }
 
@@ -1073,6 +1084,7 @@
   }
 
   function renderPopupBtn() {
+    popupBtn.style.display = IN_APP ? 'none' : '';
     const on = popupsBlocked(getSourceKey());
     popupBtn.textContent = on ? 'Pop-ups blocked ✓' : 'Pop-ups allowed';
     popupBtn.classList.toggle('on', on);
@@ -1607,7 +1619,16 @@
 
   prevBtn.addEventListener('click', () => step(-1));
   nextBtn.addEventListener('click', () => step(1));
-  document.getElementById('fsBtn').addEventListener('click', toggleFullscreen);  closeBtn.addEventListener('click', closePlayer);
+  document.getElementById('fsBtn').addEventListener('click', toggleFullscreen);
+
+  // Reload button: reloads only the player, at the point you were at.
+  // Fixes a black/frozen video (e.g. after switching away from the app or tab).
+  document.getElementById('reloadBtn').addEventListener('click', async () => {
+    if (!current) return;
+    await domainReady;
+    play({ ...current, startAt: Math.floor(estimatedPos()), autoplay: true });
+  });
+  closeBtn.addEventListener('click', closePlayer);
 
   // Keyboard shortcuts — only when the player is open and you're not typing
   document.addEventListener('keydown', e => {
