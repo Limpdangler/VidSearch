@@ -1635,10 +1635,36 @@
     if (!current) return 'none';
     const src = SOURCES[current.sourceKey || getSourceKey()];
     if (!src.pause || !src.resume) return 'none';   // e.g. vidsrc can't be told to pause
-    lastPos = estimatedPos(); lastPosAt = Date.now();
-    if (isPlaying) { src.pause(); isPlaying = false; }
-    else { src.resume(); isPlaying = true; }
-    return isPlaying ? 'playing' : 'paused';
+    if (isPlaying) {
+      lastPos = estimatedPos(); lastPosAt = Date.now();
+      src.pause();
+      isPlaying = false;
+      return 'paused';
+    }
+    // Play: reload the player where it was paused (like the ⟳ button). Android often takes
+    // a paused video's picture away in the floating window, and a plain "play" leaves it black.
+    play({ ...current, startAt: Math.floor(lastPos), autoplay: true });
+    isPlaying = true;
+    lastPosAt = Date.now();
+    return 'playing';
+  };
+
+  // For headphone buttons (via the Android app): play or pause.
+  // reload = true when in the floating window, where a plain "play" can leave the picture black.
+  window.vsPlayPause = function (wantPlay, reload) {
+    if (!current) return 'none';
+    const src = SOURCES[current.sourceKey || getSourceKey()];
+    if (!src.pause || !src.resume) return 'none';
+    if (!wantPlay) {
+      if (isPlaying) { lastPos = estimatedPos(); lastPosAt = Date.now(); src.pause(); isPlaying = false; }
+      return 'paused';
+    }
+    if (isPlaying) return 'playing';
+    if (reload) play({ ...current, startAt: Math.floor(lastPos), autoplay: true });
+    else src.resume();
+    isPlaying = true;
+    lastPosAt = Date.now();
+    return 'playing';
   };
 
   // Reload button: reloads only the player, at the point you were at.
