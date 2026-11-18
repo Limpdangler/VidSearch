@@ -1619,6 +1619,26 @@
   // so the box stays visible and you stay fullscreen when the next episode loads.
   const frameWrap = document.querySelector('.player-frame');
 
+  // Stay in fullscreen: when you tap something in the player area that reloads the player
+  // (Skip, ⟳, Next/Prev, episode drop-downs, source buttons, Up next), the app can drop out of
+  // fullscreen. If that happens within a few seconds of the tap, go straight back in — the
+  // tap still counts as permission to go fullscreen.
+  let keepFsUntil = 0;
+  function armKeepFullscreen(e) {
+    // Not for the buttons whose job is to leave fullscreen (fullscreen toggle, close)
+    if (e && e.target && e.target.closest && e.target.closest('#fsBtn, #closeBtn')) { keepFsUntil = 0; return; }
+    if (document.fullscreenElement === frameWrap) keepFsUntil = Date.now() + 4000;
+  }
+  const playerArea = document.getElementById('player');
+  playerArea.addEventListener('click', armKeepFullscreen, true);
+  playerArea.addEventListener('change', armKeepFullscreen, true);
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement && Date.now() < keepFsUntil) {
+      keepFsUntil = 0;
+      frameWrap.requestFullscreen().catch(() => {});
+    }
+  });
+
   async function toggleFullscreen() {
     try {
       if (document.fullscreenElement) {
