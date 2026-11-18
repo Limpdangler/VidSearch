@@ -1115,6 +1115,7 @@
   let hookStartAt = 0;        // where it should start
   let hookLoadAt = 0;
   let hookPauseTries = 0;
+  let hookSeen = false;       // has the helper said hello from inside the current player?
 
   function hookEnabled() {
     if (!HOOK) return false;
@@ -1139,7 +1140,15 @@
   function renderHookBtn() {
     hookBtn.style.display = HOOK ? '' : 'none';
     const on = hookEnabled();
-    hookBtn.textContent = on ? 'Player control (beta): on' : 'Player control (beta): off';
+    // While a video is open, also say whether the helper is actually connected to it
+    let state = on ? 'on' : 'off';
+    if (on && current) {
+      if (hookReady) state = 'on ✓ connected';
+      else if (Date.now() - hookLoadAt < 8000) state = 'on · connecting…';
+      else if (hookSeen) state = 'on · no video found';
+      else state = 'on · not connected';
+    }
+    hookBtn.textContent = 'Player control (beta): ' + state;
     hookBtn.classList.toggle('on', on);
   }
 
@@ -1360,7 +1369,8 @@
     const src      = SOURCES[getSourceKey()];
     current.sourceKey = getSourceKey();
     hookReady = false; hookWantPlay = autoplay; hookStartAt = startAt;
-    hookLoadAt = Date.now(); hookPauseTries = 0;
+    hookLoadAt = Date.now(); hookPauseTries = 0; hookSeen = false;
+    setTimeout(() => { if (current === info) renderHookBtn(); }, 8500);
 
     applySandbox(getSourceKey()); // must be set before loading so it applies
     playerFrame.src = src.url(info, startAt, autoplay);
@@ -1498,13 +1508,19 @@
         .catch(() => hookSend('fsFallback'));   // refused: let the player use its own fullscreen
       return;
     }
+    if (hm && typeof hm === 'object' && hm.vsHook === 'hello' && HOOK && hm.token === HOOK.token) {
+      if (!hookSeen) { hookSeen = true; renderHookBtn(); }
+      return;
+    }
     if (hm && typeof hm === 'object' && hm.vsHook === 'state' && HOOK && hm.token === HOOK.token) {
       if (!hookEnabled()) return;
+      hookSeen = true;
       const hd = Number(hm.dur) || 0;
       const hp = Number(hm.pos) || 0;
       if (hd > 0 && hd < 90) return;               // a short clip (an ad), not the show
       if (!hookReady && hd > 0) {
         hookReady = true;
+        renderHookBtn();
         // Start at the right point, and play / stay paused as asked
         if (hookStartAt > 0 && Math.abs(hp - hookStartAt) > 15) hookSend('seek', { t: hookStartAt });
         if (hookWantPlay && hm.paused) hookSend('play');
@@ -1795,8 +1811,26 @@
       t: npTitle.textContent || current.title || '',
       e: npEp.textContent || '',
       pos: Math.max(0, Math.floor(estimatedPos())),
-      dur: sameEp && saved.dur > 0 ? Math.floor(saved.dur) : 0
+      dur: sameEp && saved.dur > 0 ? Math.floor(saved.dur) : 0,
+      next: hasNextEp()
     });
+  };
+
+  function hasNextEp() {
+    return !!current && !current.isMovie && !nextBtn.disabled && !nextBtn.classList.contains('hidden');
+  }
+
+  // The card's ⏪ / ⏩ buttons: back or forward 10 seconds
+  window.vsSkipBy = function (secs) {
+    if (!current) return 'none';
+    return window.vsSeekTo(estimatedPos() + (Number(secs) || 0));
+  };
+
+  // The card's ⏭ button: next episode (there's deliberately no "previous")
+  window.vsNextEp = function () {
+    if (!hasNextEp()) return 'none';
+    step(1);
+    return 'ok';
   };
 
   // Dragging the progress bar on that card
