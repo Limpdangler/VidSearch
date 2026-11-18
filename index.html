@@ -151,6 +151,7 @@
   }
 
   .src-btn.active { border-color: var(--accent); color: var(--text); background: rgba(229, 56, 59, 0.15); }
+  .hook-btn.on { border-color: #6fcf8f; color: #6fcf8f; }
 
 
   #fsBtn, #reloadBtn { display: flex; align-items: center; justify-content: center; }
@@ -622,6 +623,7 @@
   <div class="source-row">
     <span class="source-label">Source</span>
     <div id="sourceBtns" style="display:flex;gap:0.4rem;flex-wrap:wrap;"></div>
+    <button id="hookBtn" class="src-btn hook-btn" style="display:none" title="Lets Vid Search play, pause and jump the video in any source"></button>
   </div>
 </div>
 
@@ -1057,6 +1059,53 @@
     });
   }
 
+  // ── Player helper (Android app only, beta) ──────────────────
+  // The app can add a small helper inside the video player that finds the video and
+  // obeys play / pause / jump — for every source, vidsrc included. Off unless switched on.
+  const HOOK = (window.VS_HOOK && window.VS_HOOK.token) ? window.VS_HOOK : null;
+  const hookBtn = document.getElementById('hookBtn');
+  let hookReady = false;      // has the helper found the video in the current player?
+  let hookWantPlay = true;    // should the video start by itself?
+  let hookStartAt = 0;        // where it should start
+  let hookLoadAt = 0;
+  let hookPauseTries = 0;
+
+  function hookEnabled() {
+    if (!HOOK) return false;
+    try { return localStorage.getItem('vs_hook') === '1'; } catch { return false; }
+  }
+  function hookActive() { return hookEnabled() && hookReady; }
+  function hookSend(cmd, extra) {
+    try { playerFrame.contentWindow.postMessage({ vsHookCmd: cmd, token: HOOK.token, ...(extra || {}) }, '*'); } catch {}
+  }
+
+  // Play / pause / jump for Skip, the floating window and headphones:
+  // the helper when it's on and ready, otherwise the source's own commands (if it has any)
+  function canControl(src) { return hookActive() || !!(src.pause && src.resume); }
+  function ctlPause(src) { if (hookActive()) hookSend('pause'); else if (src.pause) src.pause(); }
+  function ctlPlay(src)  { if (hookActive()) hookSend('play');  else if (src.resume) src.resume(); }
+  function ctlSeek(src, t) {
+    if (hookActive()) { hookSend('seek', { t }); return true; }
+    if (src.seek) { src.seek(t); return true; }
+    return false;
+  }
+
+  function renderHookBtn() {
+    hookBtn.style.display = HOOK ? '' : 'none';
+    const on = hookEnabled();
+    hookBtn.textContent = on ? 'Player control (beta): on' : 'Player control (beta): off';
+    hookBtn.classList.toggle('on', on);
+  }
+
+  hookBtn.addEventListener('click', async () => {
+    try { localStorage.setItem('vs_hook', hookEnabled() ? '0' : '1'); } catch {}
+    renderHookBtn();
+    if (current) {   // reload where you were, so the change applies now
+      await domainReady;
+      play({ ...current, startAt: Math.floor(estimatedPos()), autoplay: true });
+    }
+  });
+
   let current = null; // what's playing right now
 
   // ── Auto-play next episode ──────────────────────────────────
@@ -1233,10 +1282,9 @@
     const src = SOURCES[current.sourceKey || getSourceKey()];
     const to  = Math.ceil(seg.end);
 
-    if (src.seek) {
-      // This player takes commands: jump straight there, no reload
-      src.seek(to);
-      if (src.resume) src.resume();
+    if (ctlSeek(src, to)) {
+      // This player takes commands (or the helper is on): jump straight there, no reload
+      ctlPlay(src);
       lastPos = to; lastPosAt = Date.now();
     } else {
       // vidsrc can't be told to jump: reload the episode from just after the intro
@@ -1265,6 +1313,8 @@
     const autoplay = info.autoplay !== false;
     const src      = SOURCES[getSourceKey()];
     current.sourceKey = getSourceKey();
+    hookReady = false; hookWantPlay = autoplay; hookStartAt = startAt;
+    hookLoadAt = Date.now(); hookPauseTries = 0;
 
     playerFrame.src = src.url(info, startAt, autoplay);
 
@@ -1276,6 +1326,7 @@
     }
 
     renderSourceBtns();
+    renderHookBtn();
     npTitle.textContent = info.title;
     npEp.textContent = info.isMovie ? 'Movie' : `Season ${info.season} · Episode ${info.episode}`;
 
@@ -1387,6 +1438,31 @@
   window.addEventListener('message', e => {
     if (!current) return;
 
+    // Reports from the player helper (Android app, beta): they can come from a box nested
+    // deep inside the player, so they're recognised by the helper's secret code instead.
+    const hm = e.data;
+    if (hm && typeof hm === 'object' && hm.vsHook === 'state' && HOOK && hm.token === HOOK.token) {
+      if (!hookEnabled()) return;
+      const hd = Number(hm.dur) || 0;
+      const hp = Number(hm.pos) || 0;
+      if (hd > 0 && hd < 90) return;               // a short clip (an ad), not the show
+      if (!hookReady && hd > 0) {
+        hookReady = true;
+        // Start at the right point, and play / stay paused as asked
+        if (hookStartAt > 0 && Math.abs(hp - hookStartAt) > 15) hookSend('seek', { t: hookStartAt });
+        if (hookWantPlay && hm.paused) hookSend('play');
+      }
+      // "Don't start by itself" (Up next ran out): if the player starts anyway in the
+      // first few seconds, pause it (at most twice, so it never fights you)
+      if (hookReady && !hookWantPlay && !hm.paused && hookPauseTries < 2 &&
+          Date.now() - hookLoadAt < 12000) {
+        hookPauseTries++;
+        hookSend('pause');
+      }
+      handlePlayerUpdate({ status: hm.ended ? 'ended' : (hm.paused ? 'paused' : 'playing'), pos: hp, dur: hd });
+      return;
+    }
+
     // Only trust messages from the player we loaded
     let fromOurPlayer = e.source === playerFrame.contentWindow;
     if (!fromOurPlayer) {
@@ -1403,7 +1479,12 @@
     let u = null;
     try { u = src.read(msg); } catch {}
     if (!u) return;
+    handlePlayerUpdate(u);
+  });
 
+  // One report from the player — { status, pos, dur, season, episode } — from either the
+  // source's own messages or the player helper. Saves progress, drives Skip and Up next.
+  function handlePlayerUpdate(u) {
     // The player's fullscreen button: use our fullscreen instead (on/off).
     // Must happen right here, while the browser still counts it as your tap.
     if (u.fullscreenRequest) {
@@ -1484,7 +1565,7 @@
                (status === 'playing' || status === 'seeked')) {
       cancelUpNext(); // you skipped back — it'll show again near the end
     }
-  });
+  }
 
   // ── Our fullscreen ──────────────────────────────────────────
   // Makes the whole video area fullscreen (video + Up next box), not just the video,
@@ -1581,16 +1662,16 @@
   window.vsPipState = function () {
     if (!current) return '0';
     const src = SOURCES[current.sourceKey || getSourceKey()];
-    return '1' + (isPlaying ? '1' : '0') + (src.pause && src.resume ? '1' : '0');
+    return '1' + (isPlaying ? '1' : '0') + (canControl(src) ? '1' : '0');
   };
 
   window.vsPipToggle = function () {
     if (!current) return 'none';
     const src = SOURCES[current.sourceKey || getSourceKey()];
-    if (!src.pause || !src.resume) return 'none';   // e.g. vidsrc can't be told to pause
+    if (!canControl(src)) return 'none';   // e.g. vidsrc without the helper
     if (isPlaying) {
       lastPos = estimatedPos(); lastPosAt = Date.now();
-      src.pause();
+      ctlPause(src);
       isPlaying = false;
       return 'paused';
     }
@@ -1607,14 +1688,14 @@
   window.vsPlayPause = function (wantPlay, reload) {
     if (!current) return 'none';
     const src = SOURCES[current.sourceKey || getSourceKey()];
-    if (!src.pause || !src.resume) return 'none';
+    if (!canControl(src)) return 'none';
     if (!wantPlay) {
-      if (isPlaying) { lastPos = estimatedPos(); lastPosAt = Date.now(); src.pause(); isPlaying = false; }
+      if (isPlaying) { lastPos = estimatedPos(); lastPosAt = Date.now(); ctlPause(src); isPlaying = false; }
       return 'paused';
     }
     if (isPlaying) return 'playing';
     if (reload) play({ ...current, startAt: Math.floor(lastPos), autoplay: true });
-    else src.resume();
+    else ctlPlay(src);
     isPlaying = true;
     lastPosAt = Date.now();
     return 'playing';
