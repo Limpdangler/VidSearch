@@ -628,6 +628,7 @@
     <span class="source-label">Source</span>
     <div id="sourceBtns" style="display:flex;gap:0.4rem;flex-wrap:wrap;"></div>
     <button id="hookBtn" class="src-btn hook-btn" style="display:none" title="Lets Vid Search play, pause and jump the video in any source"></button>
+    <button id="autoNextBtn" class="src-btn hook-btn" title="When an episode ends, start the next one by itself"></button>
     <button id="popupBtn" class="src-btn popup-btn" title="Stop the player opening pop-ups and new tabs"></button>
   </div>
 </div>
@@ -1185,6 +1186,23 @@
   }
 
   // autoplay = true when you tapped Next, false when the countdown ran out by itself
+  // "Autoplay next" switch: when on, the next episode starts by itself when the countdown
+  // runs out. When off, it's loaded but waits for you.
+  const autoNextBtn = document.getElementById('autoNextBtn');
+  function autoNextOn() {
+    try { return localStorage.getItem('vs_autonext') === '1'; } catch { return false; }
+  }
+  function renderAutoNext() {
+    const on = autoNextOn();
+    autoNextBtn.textContent = 'Autoplay next: ' + (on ? 'on' : 'off');
+    autoNextBtn.classList.toggle('on', on);
+  }
+  autoNextBtn.addEventListener('click', () => {
+    try { localStorage.setItem('vs_autonext', autoNextOn() ? '0' : '1'); } catch {}
+    renderAutoNext();
+  });
+  renderAutoNext();
+
   function goNext(autoplay) {
     cancelUpNext();
     step(1, { autoplay });
@@ -1210,7 +1228,7 @@
     upNextTimer = setInterval(() => {
       if (upNextPaused) return;
       upNextLeft--;
-      if (upNextLeft <= 0) goNext(false); // nobody tapped: load it, but don't start playing
+      if (upNextLeft <= 0) goNext(autoNextOn()); // nobody tapped: start it only if Autoplay next is on
       else upNextCount.textContent = upNextLeft;
     }, 1000);
   }
@@ -1371,6 +1389,13 @@
     hookReady = false; hookWantPlay = autoplay; hookStartAt = startAt;
     hookLoadAt = Date.now(); hookPauseTries = 0; hookSeen = false;
     setTimeout(() => { if (current === info) renderHookBtn(); }, 8500);
+    // Some players (vidsrc) open on a cover picture and wait for a tap. When the video should
+    // start by itself, ask the helper to press the player's start button until the video shows up.
+    if (autoplay && hookEnabled()) {
+      [1500, 3000, 4500, 6500, 9000].forEach(ms => setTimeout(() => {
+        if (current === info && !hookReady) hookSend('start');
+      }, ms));
+    }
 
     applySandbox(getSourceKey()); // must be set before loading so it applies
     playerFrame.src = src.url(info, startAt, autoplay);
@@ -1628,7 +1653,7 @@
 
     if (ended) {
       // Episode finished: go now if the box was counting, otherwise show it briefly
-      if (upNextTimer) goNext(false);
+      if (upNextTimer) goNext(autoNextOn());
       else startUpNext(5);
     } else if (remaining <= UP_NEXT_LEAD) {
       // Last 15 seconds: show the box, kept in step with the real time left
