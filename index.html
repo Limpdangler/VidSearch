@@ -7,7 +7,7 @@
 <!-- ✏️ TAGLINE: change the words between the quotes. Keep the quotes and the semicolon. -->
 <script>const TAGLINE = "The first and only streaming site to publicly condemn 9/11";</script>
 
-<title>Vid Search (TEST)</title>
+<title>Vid Search</title>
 <link rel="icon" type="image/png" sizes="32x32" href="icon-32.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -152,10 +152,6 @@
 
   .src-btn.active { border-color: var(--accent); color: var(--text); background: rgba(229, 56, 59, 0.15); }
   .hook-btn.on { border-color: #6fcf8f; color: #6fcf8f; }
-
-  /* Pop-up blocker switch: sits at the right end of the Source row */
-  .popup-btn { margin-left: auto; }
-  .popup-btn.on { border-color: #6fcf8f; color: #6fcf8f; }
 
 
   #fsBtn, #reloadBtn { display: flex; align-items: center; justify-content: center; }
@@ -628,7 +624,6 @@
     <span class="source-label">Source</span>
     <div id="sourceBtns" style="display:flex;gap:0.4rem;flex-wrap:wrap;"></div>
     <button id="hookBtn" class="src-btn hook-btn" style="display:none" title="Lets Vid Search play, pause and jump the video in any source"></button>
-    <button id="popupBtn" class="src-btn popup-btn" title="Stop the player opening pop-ups and new tabs"></button>
   </div>
 </div>
 
@@ -1062,48 +1057,7 @@
       });
       sourceBtns.appendChild(b);
     });
-    renderPopupBtn();
   }
-
-  // ── Pop-up blocker ──────────────────────────────────────────
-  // Puts the player in a "sandbox": it can still run and play video, but the browser
-  // won't let it open new tabs/windows or redirect Vid Search to another page —
-  // which is how most of these ads work. Some players refuse to play when sandboxed,
-  // so it can be switched off per source (remembered on this device). On by default.
-  const popupBtn = document.getElementById('popupBtn');
-  const SANDBOX_RULES = 'allow-scripts allow-same-origin allow-forms allow-presentation allow-orientation-lock';
-
-  // Inside the Vid Search Android app, the app blocks pop-ups itself (undetectably),
-  // so the sandbox and its switch aren't needed there.
-  const IN_APP = /VidSearchApp\//.test(navigator.userAgent);
-
-  function popupsBlocked(key) {
-    if (IN_APP) return false;
-    try { return localStorage.getItem('vs_block_popups_' + key) !== '0'; } catch { return true; }
-  }
-
-  function applySandbox(key) {
-    if (popupsBlocked(key)) playerFrame.setAttribute('sandbox', SANDBOX_RULES);
-    else playerFrame.removeAttribute('sandbox');
-  }
-
-  function renderPopupBtn() {
-    popupBtn.style.display = IN_APP ? 'none' : '';
-    const on = popupsBlocked(getSourceKey());
-    popupBtn.textContent = on ? 'Pop-ups blocked ✓' : 'Pop-ups allowed';
-    popupBtn.classList.toggle('on', on);
-  }
-
-  popupBtn.addEventListener('click', async () => {
-    const key = getSourceKey();
-    try { localStorage.setItem('vs_block_popups_' + key, popupsBlocked(key) ? '0' : '1'); } catch {}
-    renderPopupBtn();
-    // The change only takes effect when the player reloads, so reload where you were
-    if (current) {
-      await domainReady;
-      play({ ...current, startAt: Math.floor(estimatedPos()), autoplay: true });
-    }
-  });
 
   // ── Player helper (Android app only, beta) ──────────────────
   // The app can add a small helper inside the video player that finds the video and
@@ -1362,7 +1316,6 @@
     hookReady = false; hookWantPlay = autoplay; hookStartAt = startAt;
     hookLoadAt = Date.now(); hookPauseTries = 0;
 
-    applySandbox(getSourceKey()); // must be set before loading so it applies
     playerFrame.src = src.url(info, startAt, autoplay);
 
     // Sources without a start-time setting get told once the player has loaded
