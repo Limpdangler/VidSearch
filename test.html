@@ -1488,6 +1488,16 @@
     // Reports from the player helper (Android app, beta): they can come from a box nested
     // deep inside the player, so they're recognised by the helper's secret code instead.
     const hm = e.data;
+    // The player's own fullscreen button (the app's helper catches it): use ours instead, so
+    // Skip intro and Up next stay visible. Works whether or not Player control is switched on.
+    if (hm && typeof hm === 'object' && hm.vsHook === 'fullscreen' && HOOK && hm.token === HOOK.token) {
+      hookSend('fsAck');
+      if (document.fullscreenElement) { exitAllFullscreen(); return; }
+      frameWrap.requestFullscreen()
+        .then(() => { try { return screen.orientation.lock('landscape'); } catch {} })
+        .catch(() => hookSend('fsFallback'));   // refused: let the player use its own fullscreen
+      return;
+    }
     if (hm && typeof hm === 'object' && hm.vsHook === 'state' && HOOK && hm.token === HOOK.token) {
       if (!hookEnabled()) return;
       const hd = Number(hm.dur) || 0;
@@ -1732,6 +1742,11 @@
     return '1' + (isPlaying ? '1' : '0') + (canControl(src) ? '1' : '0');
   };
 
+  // Reloading the player to resume only works for players that start by themselves
+  // (VidNest, VidRift). vidsrc reloads to its cover picture and waits for a tap, so it's
+  // resumed with a plain "play" instead.
+  function resumeByReload() { return (current.sourceKey || getSourceKey()) !== 'vidsrc'; }
+
   window.vsPipToggle = function () {
     if (!current) return 'none';
     const src = SOURCES[current.sourceKey || getSourceKey()];
@@ -1744,7 +1759,8 @@
     }
     // Play: reload the player where it was paused (like the ⟳ button). Android often takes
     // a paused video's picture away in the floating window, and a plain "play" leaves it black.
-    play({ ...current, startAt: Math.floor(lastPos), autoplay: true });
+    if (resumeByReload()) play({ ...current, startAt: Math.floor(lastPos), autoplay: true });
+    else ctlPlay(src);
     isPlaying = true;
     lastPosAt = Date.now();
     return 'playing';
@@ -1761,11 +1777,36 @@
       return 'paused';
     }
     if (isPlaying) return 'playing';
-    if (reload) play({ ...current, startAt: Math.floor(lastPos), autoplay: true });
+    if (reload && resumeByReload()) play({ ...current, startAt: Math.floor(lastPos), autoplay: true });
     else ctlPlay(src);
     isPlaying = true;
     lastPosAt = Date.now();
     return 'playing';
+  };
+
+  // For the Android app's "now playing" card in the notification shade:
+  // title, episode, where you are and how long it is (seconds)
+  window.vsNowPlaying = function () {
+    if (!current) return '';
+    const saved = getProgress(current.imdbId);
+    const sameEp = saved && (saved.season ?? null) === (current.season ?? null) &&
+                   (saved.episode ?? null) === (current.episode ?? null);
+    return JSON.stringify({
+      t: npTitle.textContent || current.title || '',
+      e: npEp.textContent || '',
+      pos: Math.max(0, Math.floor(estimatedPos())),
+      dur: sameEp && saved.dur > 0 ? Math.floor(saved.dur) : 0
+    });
+  };
+
+  // Dragging the progress bar on that card
+  window.vsSeekTo = function (t) {
+    if (!current) return 'none';
+    const src = SOURCES[current.sourceKey || getSourceKey()];
+    t = Math.max(0, Math.floor(Number(t) || 0));
+    if (!ctlSeek(src, t)) play({ ...current, startAt: t, autoplay: true });
+    lastPos = t; lastPosAt = Date.now();
+    return 'ok';
   };
 
   // Reload button: reloads only the player, at the point you were at.
