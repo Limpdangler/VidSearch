@@ -1720,6 +1720,10 @@
       tvKeyFromPlayer(String(hm.key || ''));
       return;
     }
+    if (hm && typeof hm === 'object' && hm.vsHook === 'tap' && HOOK && hm.token === HOOK.token) {
+      lastPlayerTap = Date.now();
+      return;
+    }
     if (hm && typeof hm === 'object' && hm.vsHook === 'dbltap' && HOOK && hm.token === HOOK.token) {
       doubleTap(typeof hm.side === 'number' ? hm.side : Math.sign(hm.secs || 0));
       return;
@@ -1866,6 +1870,18 @@
   // fullscreen. If that happens within a few seconds of the tap, go straight back in — the
   // tap still counts as permission to go fullscreen.
   let keepFsUntil = 0;
+  // Backup for taps inside the player (the app's helper reports them): if something knocks
+  // you out of fullscreen right after you touch the video, and it wasn't you leaving on
+  // purpose (✕, Back, the fullscreen button), go straight back in.
+  var lastPlayerTap = 0, fsLeaveAt = 0, inOurFs = false;
+  document.addEventListener('fullscreenchange', () => {
+    const was = inOurFs;
+    inOurFs = document.fullscreenElement === frameWrap;
+    if (was && !document.fullscreenElement && current &&
+        Date.now() - lastPlayerTap < 2500 && Date.now() - fsLeaveAt > 1500) {
+      frameWrap.requestFullscreen().catch(() => {});
+    }
+  });
   function armKeepFullscreen(e) {
     // Not for the buttons whose job is to leave fullscreen (fullscreen toggle, close)
     if (e && e.target && e.target.closest && e.target.closest('#fsBtn, #closeBtn')) { keepFsUntil = 0; return; }
@@ -1894,6 +1910,7 @@
   }
 
   async function exitAllFullscreen() {
+    fsLeaveAt = Date.now();                 // leaving on purpose: don't put you back in
     for (let i = 0; i < 3 && document.fullscreenElement; i++) {
       try { await document.exitFullscreen(); } catch { break; }
     }
@@ -1965,6 +1982,9 @@
   prevBtn.addEventListener('click', () => step(-1));
   nextBtn.addEventListener('click', () => step(1));
   document.getElementById('fsBtn').addEventListener('click', toggleFullscreen);
+
+  // The Android app's Back button is about to take you out of fullscreen (on purpose)
+  window.vsLeavingFullscreen = function () { fsLeaveAt = Date.now(); };
 
   // For the Android app's picture-in-picture play/pause button.
   // vsPipState(): '0' = nothing playing, otherwise 3 digits: open, playing, can-control
