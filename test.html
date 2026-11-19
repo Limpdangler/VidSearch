@@ -7,7 +7,7 @@
 <!-- ✏️ TAGLINE: change the words between the quotes. Keep the quotes and the semicolon. -->
 <script>const TAGLINE = "The first and only streaming site to publicly condemn 9/11";</script>
 
-<title>Vid Search (TEST)</title>
+<title>Vid Search</title>
 <link rel="icon" type="image/png" sizes="32x32" href="icon-32.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -165,10 +165,6 @@
 
   .src-btn.active { border-color: var(--accent); color: var(--text); background: rgba(229, 56, 59, 0.15); }
   .hook-btn.on { border-color: #6fcf8f; color: #6fcf8f; }
-
-  /* Pop-up blocker switch: sits at the right end of the Source row */
-  .popup-btn { margin-left: auto; }
-  .popup-btn.on { border-color: #6fcf8f; color: #6fcf8f; }
 
 
   #fsBtn, #reloadBtn { display: flex; align-items: center; justify-content: center; }
@@ -735,7 +731,6 @@
     <button id="hookBtn" class="src-btn hook-btn" style="display:none" title="Lets Vid Search play, pause and jump the video in any source"></button>
     <button id="autoNextBtn" class="src-btn hook-btn" title="When an episode ends, start the next one by itself"></button>
     <button id="autoSkipBtn" class="src-btn hook-btn" title="Skip intros and recaps by themselves, without tapping Skip"></button>
-    <button id="popupBtn" class="src-btn popup-btn" title="Stop the player opening pop-ups and new tabs"></button>
   </div>
 </div>
 
@@ -833,37 +828,6 @@
       // no controls
     },
 
-    vidnest: {
-      name: 'VidNest',
-      url(info, startAt, autoplay) {
-        // VidNest takes TMDB ids. t = start time in seconds, autoplay=1 starts by itself.
-        let url = info.isMovie
-          ? `https://vidnest.pro/movie/${info.tmdbId}`
-          : `https://vidnest.pro/tv/${info.tmdbId}/${info.season}/${info.episode}`;
-        const p = [`autoplay=${autoplay ? 1 : 0}`];
-        if (startAt > 0) p.push(`t=${startAt}`);
-        return url + '?' + p.join('&');
-      },
-      // Messages are tagged source: 'vidnest-player'; events play/pause/seeked/ended/timeupdate,
-      // with currentTime + duration; 'episodechange' has season + episode.
-      read(msg) {
-        if (msg.source !== 'vidnest-player') return null;
-        const d = (msg.data && typeof msg.data === 'object') ? { ...msg, ...msg.data } : msg;
-        const ev = String(d.event || d.type || d.action || d.name || '').toLowerCase();
-        const map = { play: 'playing', playing: 'playing', timeupdate: 'playing', pause: 'paused',
-                      paused: 'paused', seeked: 'seeked', ended: 'ended', playerstatus: d.paused ? 'paused' : 'playing' };
-        return {
-          status: map[ev] || ev,
-          pos: num(d.currentTime ?? d.time), dur: num(d.duration),
-          season: num(d.season), episode: num(d.episode),
-          episodeChange: ev === 'episodechange'
-        };
-      },
-      seek(t) { sendToPlayer({ action: 'seek', time: t }); },
-      resume() { sendToPlayer({ action: 'play' }); },
-      pause() { sendToPlayer({ action: 'pause' }); }
-    },
-
     vidrift: {
       name: 'VidRift',
       url(info, startAt, autoplay) {
@@ -902,10 +866,40 @@
       seek(t) { sendToPlayer({ type: 'vidrift:resume', currentTime: t }); },
       resume() { sendToPlayer({ type: 'vidrift:play' }); },
       pause() { sendToPlayer({ type: 'vidrift:pause' }); }
+    },
+    vidnest: {
+      name: 'VidNest',
+      url(info, startAt, autoplay) {
+        // VidNest takes TMDB ids. t = start time in seconds, autoplay=1 starts by itself.
+        let url = info.isMovie
+          ? `https://vidnest.pro/movie/${info.tmdbId}`
+          : `https://vidnest.pro/tv/${info.tmdbId}/${info.season}/${info.episode}`;
+        const p = [`autoplay=${autoplay ? 1 : 0}`];
+        if (startAt > 0) p.push(`t=${startAt}`);
+        return url + '?' + p.join('&');
+      },
+      // Messages are tagged source: 'vidnest-player'; events play/pause/seeked/ended/timeupdate,
+      // with currentTime + duration; 'episodechange' has season + episode.
+      read(msg) {
+        if (msg.source !== 'vidnest-player') return null;
+        const d = (msg.data && typeof msg.data === 'object') ? { ...msg, ...msg.data } : msg;
+        const ev = String(d.event || d.type || d.action || d.name || '').toLowerCase();
+        const map = { play: 'playing', playing: 'playing', timeupdate: 'playing', pause: 'paused',
+                      paused: 'paused', seeked: 'seeked', ended: 'ended', playerstatus: d.paused ? 'paused' : 'playing' };
+        return {
+          status: map[ev] || ev,
+          pos: num(d.currentTime ?? d.time), dur: num(d.duration),
+          season: num(d.season), episode: num(d.episode),
+          episodeChange: ev === 'episodechange'
+        };
+      },
+      seek(t) { sendToPlayer({ action: 'seek', time: t }); },
+      resume() { sendToPlayer({ action: 'play' }); },
+      pause() { sendToPlayer({ action: 'pause' }); }
     }
   };
 
-  const DEFAULT_SOURCE = 'vidnest';
+  const DEFAULT_SOURCE = 'vidsrc';
 
   function getSourceKey() {
     try {
@@ -1219,48 +1213,7 @@
       });
       sourceBtns.appendChild(b);
     });
-    renderPopupBtn();
   }
-
-  // ── Pop-up blocker ──────────────────────────────────────────
-  // Puts the player in a "sandbox": it can still run and play video, but the browser
-  // won't let it open new tabs/windows or redirect Vid Search to another page —
-  // which is how most of these ads work. Some players refuse to play when sandboxed,
-  // so it can be switched off per source (remembered on this device). On by default.
-  const popupBtn = document.getElementById('popupBtn');
-  const SANDBOX_RULES = 'allow-scripts allow-same-origin allow-forms allow-presentation allow-orientation-lock';
-
-  // Inside the Vid Search Android app, the app blocks pop-ups itself (undetectably),
-  // so the sandbox and its switch aren't needed there.
-  const IN_APP = /VidSearchApp\//.test(navigator.userAgent);
-
-  function popupsBlocked(key) {
-    if (IN_APP) return false;
-    try { return localStorage.getItem('vs_block_popups_' + key) !== '0'; } catch { return true; }
-  }
-
-  function applySandbox(key) {
-    if (popupsBlocked(key)) playerFrame.setAttribute('sandbox', SANDBOX_RULES);
-    else playerFrame.removeAttribute('sandbox');
-  }
-
-  function renderPopupBtn() {
-    popupBtn.style.display = IN_APP ? 'none' : '';
-    const on = popupsBlocked(getSourceKey());
-    popupBtn.textContent = on ? 'Pop-ups blocked ✓' : 'Pop-ups allowed';
-    popupBtn.classList.toggle('on', on);
-  }
-
-  popupBtn.addEventListener('click', async () => {
-    const key = getSourceKey();
-    try { localStorage.setItem('vs_block_popups_' + key, popupsBlocked(key) ? '0' : '1'); } catch {}
-    renderPopupBtn();
-    // The change only takes effect when the player reloads, so reload where you were
-    if (current) {
-      await domainReady;
-      play({ ...current, startAt: Math.floor(estimatedPos()), autoplay: true });
-    }
-  });
 
   // ── Player helper (Android app only, beta) ──────────────────
   // The app can add a small helper inside the video player that finds the video and
@@ -1591,7 +1544,6 @@
       }, ms));
     }
 
-    applySandbox(getSourceKey()); // must be set before loading so it applies
     playerFrame.src = src.url(info, startAt, autoplay);
 
     // Sources without a start-time setting get told once the player has loaded
@@ -1760,6 +1712,7 @@
       if (!hookReady && hd > 0) {
         hookReady = true;
         renderHookBtn();
+        hookSend('lock');      // the video's playing: stop ads dropping web pages into the player
         // Start at the right point, and play / stay paused as asked
         if (hookStartAt > 0 && Math.abs(hp - hookStartAt) > 15) hookSend('seek', { t: hookStartAt });
         if (hookWantPlay && hm.paused) hookSend('play');
