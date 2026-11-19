@@ -28,6 +28,10 @@
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
+  /* No text cursor or text selection except where you type */
+  html { -webkit-user-select: none; user-select: none; caret-color: transparent; }
+  input, textarea { -webkit-user-select: text; user-select: text; caret-color: auto; }
+
   body {
     background: var(--bg);
     color: var(--text);
@@ -125,6 +129,23 @@
 
   /* Source switch (vidsrc / VidNest / VidRift) */
   /* Season / episode drop-downs under Prev / Next */
+  /* Drop-downs (season / episode under the player) */
+  select {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.9rem;
+    padding: 0.35rem 0.5rem;
+    border-radius: 3px;
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.2s;
+    max-width: 120px;
+  }
+  select:focus { border-color: var(--accent); }
+  select option { background: var(--surface2); }
+
   .ep-jump {
     display: flex;
     gap: 0.6rem;
@@ -2374,13 +2395,20 @@
   // Turns a TMDB result into what a tile needs
   function fromTmdb(r, isMovie) {
     if (isMovie === undefined) isMovie = r.media_type === 'movie';
+    const date = (isMovie ? r.release_date : r.first_air_date) || '';
     return {
       id: r.id, isMovie,
       title: isMovie ? r.title : r.name,
       poster: r.poster_path || null,
-      year: ((isMovie ? r.release_date : r.first_air_date) || '').slice(0, 4)
+      year: date.slice(0, 4),
+      date
     };
   }
+
+  // Out already? (Upcoming films and shows can't be watched yet, so they're left out of
+  // the rows and More like this.)
+  function todayISO() { return new Date().toISOString().slice(0, 10); }
+  function isOut(it) { return !!(it && it.date && it.date <= todayISO()); }
 
   function makeTile(it) {
     const b = document.createElement('button');
@@ -2429,17 +2457,18 @@
   const ROW_KEEP = 3 * 3600 * 1000;
 
   async function rowItems(row) {
-    const key = 'vs_cache_' + row.path.replace(/\W/g, '_');
+    const key = 'vs_cache2_' + row.path.replace(/\W/g, '_');
     try {
       const c = JSON.parse(localStorage.getItem(key) || 'null');
-      if (c && Date.now() - c.at < ROW_KEEP && Array.isArray(c.items) && c.items.length) return c.items;
+      if (c && Date.now() - c.at < ROW_KEEP && Array.isArray(c.items) && c.items.length) return c.items.filter(isOut);
     } catch {}
     const data = await tmdb(row.path);
     const items = (data.results || [])
       .filter(r => row.isMovie !== undefined || r.media_type === 'movie' || r.media_type === 'tv')
       .filter(r => r.poster_path)
-      .slice(0, 20)
-      .map(r => fromTmdb(r, row.isMovie));
+      .map(r => fromTmdb(r, row.isMovie))
+      .filter(isOut)
+      .slice(0, 20);
     try { localStorage.setItem(key, JSON.stringify({ at: Date.now(), items })); } catch {}
     return items;
   }
@@ -2573,7 +2602,12 @@
     const hero = detailsEl.querySelector('.d-hero');
     if (data.backdrop_path) hero.style.backgroundImage = `url("${IMG}w780${data.backdrop_path}")`;
 
-    const target = playTarget(isMovie, imdbId, seasons);
+    const releaseDate = (isMovie ? data.release_date : data.first_air_date) || '';
+    const notOut = !releaseDate || releaseDate > todayISO();
+    const target = notOut ? null : playTarget(isMovie, imdbId, seasons);
+    const notOutMsg = !notOut ? '' : releaseDate
+      ? `Not out yet: ${isMovie ? 'comes out' : 'starts'} ${new Date(releaseDate + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}.`
+      : 'Not out yet: no release date announced.';
     const body = detailsEl.querySelector('.d-body');
     body.innerHTML = `
       <h2 class="d-title">${esc(title)}</h2>
@@ -2582,7 +2616,7 @@
       <div class="d-actions">
         ${target && imdbId ? `<button class="stream-btn d-play">▶ ${esc(target.label)}</button>` : ''}
         <button class="src-btn d-list"></button>
-        <span class="d-msg d-actions-msg">${!imdbId ? "Can't be played: no IMDb ID for this one." : (!isMovie && !seasons.length ? 'No episodes out yet.' : '')}</span>
+        <span class="d-msg d-actions-msg">${notOut ? esc(notOutMsg) : !imdbId ? "Can't be played: no IMDb ID for this one." : (!isMovie && !seasons.length ? 'No episodes out yet.' : '')}</span>
       </div>
       ${!isMovie && seasons.length ? `
         <div class="section-label">Episodes</div>
@@ -2658,8 +2692,9 @@
     // More like this
     const recs = ((data.recommendations && data.recommendations.results) || [])
       .filter(r => r.poster_path)
-      .slice(0, 15)
-      .map(r => fromTmdb(r, r.media_type ? r.media_type === 'movie' : isMovie));
+      .map(r => fromTmdb(r, r.media_type ? r.media_type === 'movie' : isMovie))
+      .filter(isOut)
+      .slice(0, 15);
     if (recs.length) body.appendChild(makeRow('More like this', recs));
 
     if (isTvLayout()) navFocus(playBtn || listBtn);
