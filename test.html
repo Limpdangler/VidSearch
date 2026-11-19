@@ -90,6 +90,18 @@
 
   .player-frame:fullscreen .up-next { top: 1rem; right: 1rem; }
 
+  /* TV fullscreen: the player simply stretched over the whole screen. (Android's own
+     fullscreen leaves the picture small in the corner on a Fire Stick.) */
+  .player-frame.tv-full {
+    position: fixed; inset: 0; z-index: 900;
+    width: 100vw; height: 100vh; aspect-ratio: auto;
+    border: none; border-radius: 0;
+  }
+  body.tv-full-on { overflow: hidden; }
+  body.tv .player-frame.tv-full:focus { outline: none !important; }
+  .player-frame.tv-full .up-next { top: 1rem; right: 1rem; }
+  .player-frame.tv-full .skip-btn { right: 1.5rem; bottom: 5rem; font-size: 1.3rem; }
+
   /* Skip intro / recap button: bottom-right, above the player's own controls */
   .skip-btn {
     position: absolute;
@@ -1716,7 +1728,8 @@
     // Skip intro and Up next stay visible. Works whether or not Player control is switched on.
     if (hm && typeof hm === 'object' && hm.vsHook === 'fullscreen' && HOOK && hm.token === HOOK.token) {
       hookSend('fsAck');
-      if (document.fullscreenElement) { exitAllFullscreen(); return; }
+      if (inAnyFullscreen()) { exitAllFullscreen(); return; }
+      if (isTvLayout()) { setTvFull(true); return; }
       frameWrap.requestFullscreen()
         .then(() => { try { return screen.orientation.lock('landscape'); } catch {} })
         .catch(() => hookSend('fsFallback'));   // refused: let the player use its own fullscreen
@@ -1903,7 +1916,22 @@
     }
   });
 
+  // On a TV: stretch the player over the screen instead of Android's fullscreen
+  function setTvFull(on) {
+    frameWrap.classList.toggle('tv-full', on);
+    document.body.classList.toggle('tv-full-on', on);
+    if (frameWrap.dataset.nav) navFocus(frameWrap);
+  }
+  function inAnyFullscreen() {
+    return !!document.fullscreenElement || frameWrap.classList.contains('tv-full');
+  }
+
   async function toggleFullscreen() {
+    if (isTvLayout() || frameWrap.classList.contains('tv-full')) {
+      if (inAnyFullscreen()) await exitAllFullscreen();
+      else setTvFull(true);
+      return;
+    }
     try {
       if (document.fullscreenElement) {
         await exitAllFullscreen();
@@ -1917,6 +1945,7 @@
 
   async function exitAllFullscreen() {
     fsLeaveAt = Date.now();                 // leaving on purpose: don't put you back in
+    if (frameWrap.classList.contains('tv-full')) setTvFull(false);
     for (let i = 0; i < 3 && document.fullscreenElement; i++) {
       try { await document.exitFullscreen(); } catch { break; }
     }
@@ -1988,6 +2017,10 @@
   prevBtn.addEventListener('click', () => step(-1));
   nextBtn.addEventListener('click', () => step(1));
   document.getElementById('fsBtn').addEventListener('click', toggleFullscreen);
+
+  // Fire TV remote (the app passes these on): ≡ = fullscreen on/off, ⏪ ⏩ = 10 seconds
+  window.vsToggleFullscreen = function () { if (current) toggleFullscreen(); };
+  window.vsJump = function (secs) { return jumpBy(Number(secs) || 0) ? 'ok' : 'none'; };
 
   // The Android app's Back button is about to take you out of fullscreen (on purpose)
   window.vsLeavingFullscreen = function () { fsLeaveAt = Date.now(); };
@@ -2354,7 +2387,8 @@
 
   // Only what's on top counts: the Who's watching screen, or the fullscreen video
   function navItems() {
-    const scope = whoEl.classList.contains('open') ? whoEl : (document.fullscreenElement || document);
+    const scope = whoEl.classList.contains('open') ? whoEl
+                : (document.fullscreenElement || (frameWrap.classList.contains('tv-full') ? frameWrap : document));
     const items = [...scope.querySelectorAll(NAV_SEL)];
     if (scope !== document && scope.matches && scope.matches(NAV_SEL)) items.unshift(scope);
     return items.filter(navVisible);
@@ -2453,6 +2487,7 @@
     if (!current) return;
     if (skipBtn.classList.contains('visible')) { skipBtn.click(); return; }
     if (upNextEl.classList.contains('visible')) { goNext(true); return; }
+    if (!inAnyFullscreen()) { toggleFullscreen(); return; }       // OK = go fullscreen first
     if (window.vsPlayPause(!isPlaying, false) !== 'none') return;
     if (HOOK && hookEnabled() && !hookReady) { hookSend('start'); return; }   // cover screen: press its play button
     try { playerFrame.focus(); } catch {}                                       // let the player have the remote
@@ -2942,6 +2977,7 @@
 
   // Android app Back button: close the editor / profile screen first
   window.vsBack = function () {
+    if (frameWrap.classList.contains('tv-full')) { exitAllFullscreen(); return 'handled'; }
     if (whoEl.classList.contains('editing')) { closeEditor(); return 'handled'; }
     if (whoEl.classList.contains('open') && !whoEl.dataset.startup) { closeWho(); return 'handled'; }
     return '';
