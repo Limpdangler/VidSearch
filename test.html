@@ -7,7 +7,7 @@
 <!-- ✏️ TAGLINE: change the words between the quotes. Keep the quotes and the semicolon. -->
 <script>const TAGLINE = "The first and only streaming site to publicly condemn 9/11";</script>
 
-<title>Vid Search</title>
+<title>Vid Search (TEST)</title>
 <link rel="icon" type="image/png" sizes="32x32" href="icon-32.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -165,6 +165,10 @@
 
   .src-btn.active { border-color: var(--accent); color: var(--text); background: rgba(229, 56, 59, 0.15); }
   .hook-btn.on { border-color: #6fcf8f; color: #6fcf8f; }
+
+  /* Pop-up blocker switch: sits at the right end of the Source row */
+  .popup-btn { margin-left: auto; }
+  .popup-btn.on { border-color: #6fcf8f; color: #6fcf8f; }
 
 
   #fsBtn, #reloadBtn { display: flex; align-items: center; justify-content: center; }
@@ -464,92 +468,6 @@
 
   .stream-btn:hover { background: var(--accent); color: #fff; }
 
-  /* Episode picker — only shown for TV */
-  .ep-picker {
-    background: var(--surface2);
-    border-top: 1px solid var(--border);
-    padding: 0.75rem 1rem;
-    display: none;
-    flex-direction: column;
-    gap: 0.6rem;
-  }
-
-  .ep-picker.visible { display: flex; }
-
-  .ep-row {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-  }
-
-  .ep-label {
-    font-size: 0.78rem;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    white-space: nowrap;
-  }
-
-  .ep-inputs {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-    flex: 1;
-  }
-
-  .ep-select-wrap {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.2rem;
-  }
-
-  .ep-select-wrap span {
-    font-size: 0.68rem;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-
-  select {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--text);
-    font-family: 'DM Sans', sans-serif;
-    font-size: 0.9rem;
-    padding: 0.35rem 0.5rem;
-    border-radius: 3px;
-    outline: none;
-    cursor: pointer;
-    transition: border-color 0.2s;
-    max-width: 120px;
-  }
-
-  select:focus { border-color: var(--accent); }
-  select option { background: var(--surface2); }
-
-  .ep-loading {
-    font-size: 0.78rem;
-    color: var(--muted);
-    font-style: italic;
-  }
-
-  .ep-go-btn {
-    background: var(--accent);
-    color: #fff;
-    border: none;
-    font-family: 'Bebas Neue', sans-serif;
-    font-size: 0.95rem;
-    letter-spacing: 0.08em;
-    padding: 0.4rem 1rem;
-    border-radius: 3px;
-    cursor: pointer;
-    transition: opacity 0.2s;
-    white-space: nowrap;
-  }
-
-  .ep-go-btn:hover { opacity: 0.85; }
 
   #status {
     color: var(--muted);
@@ -565,6 +483,76 @@
     outline-offset: 2px;
   }
 
+
+
+  /* ── Home screen rows ──────────────────────────── */
+  .home { width: 100%; max-width: 960px; display: flex; flex-direction: column; gap: 1.4rem; margin-bottom: 2rem; }
+  .home:empty { display: none; }
+  body.playing .home { display: none; }
+  .row { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; }
+  .row-track {
+    display: flex; gap: 0.6rem; overflow-x: auto; overflow-y: hidden;
+    scroll-snap-type: x proximity; padding: 4px 2px 8px; scrollbar-width: none;
+  }
+  .row-track::-webkit-scrollbar { display: none; }
+  .tile {
+    flex: none; width: 7.4rem; background: none; border: none; padding: 0; cursor: pointer;
+    color: var(--text); text-align: left; font-family: inherit; scroll-snap-align: start; border-radius: 6px;
+  }
+  .tile-poster, .tile .no-art {
+    display: block; width: 100%; aspect-ratio: 2 / 3; border-radius: 6px; background: var(--surface2);
+    object-fit: cover; transition: transform 0.15s;
+  }
+  .tile .no-art { display: flex; align-items: center; justify-content: center; padding: 0.4rem; text-align: center; font-size: 0.8rem; color: var(--muted); }
+  .tile-title { display: block; margin-top: 0.35rem; font-size: 0.78rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile:hover .tile-poster, .tile:focus .tile-poster { transform: scale(1.04); }
+  .tile:hover .tile-title, .tile:focus .tile-title { color: var(--text); }
+  .row-msg { color: var(--muted); font-size: 0.8rem; padding: 0.5rem 0; }
+  body.tv .tile { width: 6.4rem; }
+
+  /* ── Show page ─────────────────────────────────── */
+  .details { position: fixed; inset: 0; z-index: 800; background: var(--bg); overflow-y: auto; display: none; }
+  .details.open { display: block; }
+  body.details-open { overflow: hidden; }
+  .d-hero { position: relative; width: 100%; aspect-ratio: 16 / 9; max-height: 56vh; background: var(--surface) center / cover no-repeat; }
+  .d-hero::after { content: ''; position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(10,10,10,0) 35%, var(--bg) 100%); pointer-events: none; }
+  .d-close {
+    position: absolute; top: 0.8rem; right: 0.8rem; z-index: 2; width: 2.5rem; height: 2.5rem; border-radius: 50%;
+    border: none; background: rgba(0,0,0,0.65); color: #fff; font-size: 1.1rem; cursor: pointer;
+  }
+  .d-body { max-width: 960px; margin: -4rem auto 0; position: relative; z-index: 1; padding: 0 1.2rem 3rem; display: flex; flex-direction: column; gap: 0.9rem; }
+  .d-title { font-family: 'Bebas Neue', sans-serif; font-weight: 400; font-size: clamp(2.1rem, 6vw, 3.4rem); letter-spacing: 0.04em; line-height: 1; }
+  .d-meta { color: #999; font-size: 0.85rem; }
+  .d-meta .star { color: #f4c542; }
+  .d-overview { font-size: 0.92rem; line-height: 1.5; color: #ccc; max-width: 70ch; }
+  .d-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+  .d-play { background: var(--accent); color: #fff; padding: 0.55rem 1.4rem; font-size: 1.1rem; }
+  .d-play:hover, .d-play:focus { background: #c92a2d; color: #fff; }
+  .d-list.on { border-color: var(--text); color: var(--text); }
+  .d-seasons { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+  .d-season.on { border-color: var(--accent); color: var(--accent); }
+  .d-eps { display: flex; flex-direction: column; gap: 0.5rem; }
+  .ep {
+    display: flex; gap: 0.8rem; align-items: flex-start; width: 100%; padding: 0.5rem; cursor: pointer;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); font-family: inherit; text-align: left;
+  }
+  .ep:hover, .ep:focus { border-color: var(--text); }
+  .ep-still { position: relative; flex: none; width: 8.5rem; aspect-ratio: 16 / 9; border-radius: 4px; background: var(--surface2); overflow: hidden; }
+  .ep-still img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .ep-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,0.25); }
+  .ep-bar i { display: block; height: 100%; background: var(--accent); }
+  .ep-info { min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+  .ep-name { font-size: 0.9rem; font-weight: 500; }
+  .ep-sub { font-size: 0.75rem; color: var(--muted); }
+  .ep-desc { font-size: 0.78rem; color: #aaa; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .d-msg { color: var(--muted); font-size: 0.85rem; }
+  .d-body .section-label { margin-top: 0.6rem; }
+  body.tv .d-hero { max-height: 46vh; }
+  @media (max-width: 600px) {
+    .ep-still { width: 7rem; }
+    .d-body { padding: 0 1rem 2.5rem; margin-top: -3rem; }
+  }
 
   /* ── Who's watching (profiles) ─────────────────── */
   .who {
@@ -731,10 +719,14 @@
     <button id="hookBtn" class="src-btn hook-btn" style="display:none" title="Lets Vid Search play, pause and jump the video in any source"></button>
     <button id="autoNextBtn" class="src-btn hook-btn" title="When an episode ends, start the next one by itself"></button>
     <button id="autoSkipBtn" class="src-btn hook-btn" title="Skip intros and recaps by themselves, without tapping Skip"></button>
+    <button id="popupBtn" class="src-btn popup-btn" title="Stop the player opening pop-ups and new tabs"></button>
   </div>
 </div>
 
 <div id="continue"></div>
+
+<!-- Home screen rows: My List, Trending, Popular shows, Top rated films -->
+<div id="home" class="home"></div>
 
 <!-- Profile: who's watching, and syncing their history between devices -->
 <div class="sync-box" id="syncBox">
@@ -749,6 +741,9 @@
 
 <!-- TV layout: Continue watching moves into this side panel -->
 <aside id="tvPanel" class="tv-panel"></aside>
+
+<!-- Show page: backdrop, info, episodes, More like this -->
+<div id="details" class="details" role="dialog" aria-label="Details"></div>
 
 <!-- Who's watching? (shown when the app opens, if there's more than one profile) -->
 <div id="who" class="who" role="dialog" aria-label="Who's watching">
@@ -1092,6 +1087,11 @@
         </div>
         <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>`;
 
+      card.querySelectorAll('.result-poster, .no-poster, .result-info').forEach(el => {
+        el.style.cursor = 'pointer';
+        el.addEventListener('click', () => openDetails(show.tmdbId, !!show.isMovie));
+      });
+
       card.querySelector('.stream-btn').addEventListener('click', async () => {
         await domainReady;
         const base = {
@@ -1213,7 +1213,48 @@
       });
       sourceBtns.appendChild(b);
     });
+    renderPopupBtn();
   }
+
+  // ── Pop-up blocker ──────────────────────────────────────────
+  // Puts the player in a "sandbox": it can still run and play video, but the browser
+  // won't let it open new tabs/windows or redirect Vid Search to another page —
+  // which is how most of these ads work. Some players refuse to play when sandboxed,
+  // so it can be switched off per source (remembered on this device). On by default.
+  const popupBtn = document.getElementById('popupBtn');
+  const SANDBOX_RULES = 'allow-scripts allow-same-origin allow-forms allow-presentation allow-orientation-lock';
+
+  // Inside the Vid Search Android app, the app blocks pop-ups itself (undetectably),
+  // so the sandbox and its switch aren't needed there.
+  const IN_APP = /VidSearchApp\//.test(navigator.userAgent);
+
+  function popupsBlocked(key) {
+    if (IN_APP) return false;
+    try { return localStorage.getItem('vs_block_popups_' + key) !== '0'; } catch { return true; }
+  }
+
+  function applySandbox(key) {
+    if (popupsBlocked(key)) playerFrame.setAttribute('sandbox', SANDBOX_RULES);
+    else playerFrame.removeAttribute('sandbox');
+  }
+
+  function renderPopupBtn() {
+    popupBtn.style.display = IN_APP ? 'none' : '';
+    const on = popupsBlocked(getSourceKey());
+    popupBtn.textContent = on ? 'Pop-ups blocked ✓' : 'Pop-ups allowed';
+    popupBtn.classList.toggle('on', on);
+  }
+
+  popupBtn.addEventListener('click', async () => {
+    const key = getSourceKey();
+    try { localStorage.setItem('vs_block_popups_' + key, popupsBlocked(key) ? '0' : '1'); } catch {}
+    renderPopupBtn();
+    // The change only takes effect when the player reloads, so reload where you were
+    if (current) {
+      await domainReady;
+      play({ ...current, startAt: Math.floor(estimatedPos()), autoplay: true });
+    }
+  });
 
   // ── Player helper (Android app only, beta) ──────────────────
   // The app can add a small helper inside the video player that finds the video and
@@ -1544,6 +1585,7 @@
       }, ms));
     }
 
+    applySandbox(getSourceKey()); // must be set before loading so it applies
     playerFrame.src = src.url(info, startAt, autoplay);
 
     // Sources without a start-time setting get told once the player has loaded
@@ -2131,6 +2173,8 @@
   }
 
   // ── Render card ──────────────────────────────────────────────
+  // A search result. Tapping it (or Open) opens its show page, with the episodes,
+  // the Play / Resume button and My List.
   function renderCard(item) {
     const isMovie = item.media_type === 'movie';
     const title   = isMovie ? item.title : item.name;
@@ -2144,104 +2188,21 @@
 
     const card = document.createElement('div');
     card.className = 'result-card';
-
     card.innerHTML = `
       <div class="card-main">
         ${poster}
         <div class="result-info">
           <div class="result-title">${esc(title)}</div>
-          <div class="result-meta">${type}${year ? ' · ' + year : ''}<span class="resume-hint"></span></div>
+          <div class="result-meta">${type}${year ? ' · ' + year : ''}</div>
         </div>
-        <button class="stream-btn">Stream</button>
-      </div>
-      ${!isMovie ? `
-      <div class="ep-picker">
-        <div class="ep-row">
-          <span class="ep-label">Episode</span>
-          <div class="ep-inputs">
-            <div class="ep-select-wrap">
-              <select class="season-select"><option>S1</option></select>
-              <span>Season</span>
-            </div>
-            <div class="ep-select-wrap">
-              <select class="episode-select"><option>E1</option></select>
-              <span>Episode</span>
-            </div>
-          </div>
-          <button class="ep-go-btn">Play</button>
-        </div>
-        <div class="ep-loading">Loading episodes...</div>
-      </div>` : ''}
-    `;
-
-    const streamBtn = card.querySelector('.stream-btn');
-    const epPicker  = card.querySelector('.ep-picker');
-
-    if (isMovie) {
-      streamBtn.addEventListener('click', () => openStream(item, true, null, null, title));
-    } else {
-      const sSel      = card.querySelector('.season-select');
-      const eSel      = card.querySelector('.episode-select');
-      const goBtn     = card.querySelector('.ep-go-btn');
-      const epLoading = card.querySelector('.ep-loading');
-      let cachedImdbId  = null;
-      let seasonData    = []; // [{ n: seasonNumber, count: episodeCount }]
-
-      function updateEpisodes(keepEp) {
-        const sNum   = parseInt(sSel.value);
-        const season = seasonData.find(s => s.n === sNum);
-        const count  = season ? season.count : 1;
-        const chosen = keepEp || 1;
-        eSel.innerHTML = Array.from({ length: count }, (_, i) =>
-          `<option value="${i + 1}"${i + 1 === chosen ? ' selected' : ''}>E${i + 1}</option>`
-        ).join('');
-      }
-
-      sSel.addEventListener('change', () => updateEpisodes());
-
-      // One request gets the seasons and IMDB ID together, then restores saved progress
-      getShow(item.id).then(show => {
-        seasonData   = show.seasons;
-        cachedImdbId = show.imdbId;
-
-        if (!cachedImdbId || !seasonData.length) {
-          epLoading.textContent = 'No episodes available for this show.';
-          return;
-        }
-
-        sSel.innerHTML = seasonData.map(s =>
-          `<option value="${s.n}">S${s.n}</option>`
-        ).join('');
-        updateEpisodes();
-        epLoading.style.display = 'none';
-
-        const saved = getProgress(cachedImdbId);
-        if (saved && seasonData.some(s => s.n === saved.season)) {
-          sSel.value = saved.season;
-          updateEpisodes(saved.episode);
-          const pct = isFinished(saved) ? 0 : percent(saved);
-          card.querySelector('.resume-hint').textContent =
-            `· S${saved.season}E${saved.episode}${pct ? ' · ' + pct + '%' : ''} saved`;
-        }
-      }).catch(() => {
-        epLoading.textContent = 'Could not load episode list.';
-      });
-
-      // Stream button (shows) — open/close the episode picker; Play starts it
-      streamBtn.addEventListener('click', () => {
-        epPicker.classList.toggle('visible');
-      });
-
-      // Play button — play the chosen episode
-      goBtn.addEventListener('click', () => {
-        if (!cachedImdbId) {
-          statusDiv.textContent = 'Still loading, try again in a second...';
-          return;
-        }
-        openStream(item, false, parseInt(sSel.value), parseInt(eSel.value), title, cachedImdbId);
-      });
-    }
-
+        <button class="stream-btn">Open</button>
+      </div>`;
+    const open = () => openDetails(item.id, isMovie);
+    card.querySelector('.stream-btn').addEventListener('click', open);
+    card.querySelectorAll('.result-poster, .no-poster, .result-info').forEach(el => {
+      el.style.cursor = 'pointer';
+      el.addEventListener('click', open);
+    });
     resultsDiv.appendChild(card);
   }
 
@@ -2284,16 +2245,335 @@
   }
 
 
+  // ============================================
+  // BROWSING: home screen rows, show page, My List, More like this
+  // All the information comes from TMDB (the same free film database used for search).
+  // ============================================
+  const homeEl    = document.getElementById('home');
+  const detailsEl = document.getElementById('details');
+  const IMG       = 'https://image.tmdb.org/t/p/';
+
+  // ── My List (per profile; synced along with your history) ──
+  // Stored as { "t1396": { id, isMovie, title, poster, year, t } }. Taking something off
+  // leaves a { gone: true, t } marker for a while, so the removal syncs to other devices.
+  function getMyList() {
+    try { return JSON.parse(localStorage.getItem('vs_mylist') || '{}') || {}; } catch { return {}; }
+  }
+  function setMyList(obj) {
+    try { localStorage.setItem('vs_mylist', JSON.stringify(obj)); } catch {}
+  }
+  function listKey(isMovie, id) { return (isMovie ? 'm' : 't') + id; }
+  function inMyList(isMovie, id) {
+    const r = getMyList()[listKey(isMovie, id)];
+    return !!(r && !r.gone);
+  }
+  function myListItems() {
+    return Object.values(getMyList()).filter(r => r && !r.gone && r.id).sort((a, b) => (b.t || 0) - (a.t || 0));
+  }
+  function toggleMyList(it) {
+    const list = getMyList();
+    const key = listKey(it.isMovie, it.id);
+    const adding = !inMyList(it.isMovie, it.id);
+    list[key] = adding
+      ? { id: it.id, isMovie: !!it.isMovie, title: it.title, poster: it.poster || null, year: it.year || '', t: Date.now() }
+      : { gone: true, t: Date.now() };
+    setMyList(list);
+    renderMyListRow();
+    if (typeof scheduleSync === 'function') scheduleSync(1000);
+    return adding;
+  }
+
+  // ── Poster tiles and rows ──
+  // Turns a TMDB result into what a tile needs
+  function fromTmdb(r, isMovie) {
+    if (isMovie === undefined) isMovie = r.media_type === 'movie';
+    return {
+      id: r.id, isMovie,
+      title: isMovie ? r.title : r.name,
+      poster: r.poster_path || null,
+      year: ((isMovie ? r.release_date : r.first_air_date) || '').slice(0, 4)
+    };
+  }
+
+  function makeTile(it) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'tile';
+    b.innerHTML = (it.poster
+        ? `<img class="tile-poster" loading="lazy" src="${IMG}w185${esc(it.poster)}" alt="">`
+        : `<span class="no-art">${esc(it.title)}</span>`) +
+      `<span class="tile-title">${esc(it.title)}</span>`;
+    b.title = it.title + (it.year ? ` (${it.year})` : '');
+    b.addEventListener('click', () => openDetails(it.id, it.isMovie));
+    return b;
+  }
+
+  function makeRow(label, items, id) {
+    const sec = document.createElement('section');
+    sec.className = 'row';
+    if (id) sec.id = id;
+    sec.innerHTML = `<div class="section-label">${esc(label)}</div><div class="row-track"></div>`;
+    const track = sec.querySelector('.row-track');
+    items.forEach(it => track.appendChild(makeTile(it)));
+    return sec;
+  }
+
+  // The rows on the home screen. Each is one small request, saved on the device for 3 hours.
+  const HOME_ROWS = [
+    { label: 'Trending this week', path: 'trending/all/week' },
+    { label: 'Popular shows',      path: 'tv/popular',      isMovie: false },
+    { label: 'Top rated films',    path: 'movie/top_rated', isMovie: true }
+  ];
+  const ROW_KEEP = 3 * 3600 * 1000;
+
+  async function rowItems(row) {
+    const key = 'vs_cache_' + row.path.replace(/\W/g, '_');
+    try {
+      const c = JSON.parse(localStorage.getItem(key) || 'null');
+      if (c && Date.now() - c.at < ROW_KEEP && Array.isArray(c.items) && c.items.length) return c.items;
+    } catch {}
+    const data = await tmdb(row.path);
+    const items = (data.results || [])
+      .filter(r => row.isMovie !== undefined || r.media_type === 'movie' || r.media_type === 'tv')
+      .filter(r => r.poster_path)
+      .slice(0, 20)
+      .map(r => fromTmdb(r, row.isMovie));
+    try { localStorage.setItem(key, JSON.stringify({ at: Date.now(), items })); } catch {}
+    return items;
+  }
+
+  function renderMyListRow() {
+    const old = document.getElementById('rowMyList');
+    const items = myListItems();
+    if (!items.length) { if (old) old.remove(); return; }
+    const sec = makeRow('My List', items, 'rowMyList');
+    if (old) old.replaceWith(sec); else homeEl.prepend(sec);
+  }
+
+  let homeBuilt = false, homeFailed = false;
+  function renderHome() {
+    renderMyListRow();
+    if (homeBuilt && !homeFailed) return;
+    homeBuilt = true; homeFailed = false;
+    homeEl.querySelectorAll('.row:not(#rowMyList)').forEach(el => el.remove());
+    HOME_ROWS.forEach(row => {
+      const sec = makeRow(row.label, []);
+      const track = sec.querySelector('.row-track');
+      track.innerHTML = '<div class="row-msg">Loading…</div>';
+      homeEl.appendChild(sec);
+      rowItems(row).then(items => {
+        if (!items.length) { sec.remove(); return; }
+        track.innerHTML = '';
+        items.forEach(it => track.appendChild(makeTile(it)));
+      }).catch(() => {
+        homeFailed = true;           // try again next time you go home
+        track.innerHTML = `<div class="row-msg">Couldn't load this row. Check your connection.</div>`;
+      });
+    });
+  }
+
+  // ── Show page ──
+  let detailsReq = 0;
+  let detailsReturn = null;          // what was highlighted before (TV), to go back to
+  const seasonCache = {};
+
+  function closeDetails(backToWhereYouWere) {
+    detailsReq++;
+    detailsEl.classList.remove('open');
+    document.body.classList.remove('details-open');
+    if (isTvLayout()) {
+      if (backToWhereYouWere !== false && detailsReturn && detailsReturn.isConnected) navFocus(detailsReturn);
+      else tvStartFocus();
+    }
+    detailsReturn = null;
+  }
+
+  function detailsMsg(text) {
+    const body = detailsEl.querySelector('.d-body');
+    if (body) body.innerHTML = `<div class="d-msg">${esc(text)}</div>`;
+  }
+
+  async function openDetails(id, isMovie) {
+    const myReq = ++detailsReq;
+    if (!detailsEl.classList.contains('open')) detailsReturn = document.activeElement;
+    detailsEl.innerHTML = `<div class="d-hero"><button class="d-close" aria-label="Close">✕</button></div>
+      <div class="d-body"><div class="d-msg">Loading…</div></div>`;
+    detailsEl.querySelector('.d-close').addEventListener('click', () => closeDetails());
+    detailsEl.classList.add('open');
+    document.body.classList.add('details-open');
+    detailsEl.scrollTop = 0;
+    if (isTvLayout()) navFocus(detailsEl.querySelector('.d-close'));
+
+    let data;
+    try {
+      data = await tmdb(`${isMovie ? 'movie' : 'tv'}/${id}`, '&append_to_response=external_ids,recommendations');
+    } catch {
+      if (myReq === detailsReq) detailsMsg("Couldn't load this. Check your connection and try again.");
+      return;
+    }
+    if (myReq !== detailsReq) return;
+    const imdbId = (data.external_ids && data.external_ids.imdb_id) || data.imdb_id || null;
+    // Share the show info with the player (saves it asking again)
+    if (!isMovie) showCache[id] = Promise.resolve({ seasons: parseSeasons(data), imdbId });
+    renderDetails(data, id, isMovie, imdbId, myReq);
+  }
+
+  // What the big button does: resume, the next episode, or the start
+  function playTarget(isMovie, imdbId, seasons) {
+    const saved = imdbId ? getProgress(imdbId) : null;
+    if (isMovie) {
+      const resume = saved && !isFinished(saved) && saved.pos > 10;
+      return { label: resume ? 'Resume' : 'Play', season: null, episode: null };
+    }
+    if (!seasons.length) return null;
+    if (saved && saved.season != null && seasons.some(s => s.n === saved.season)) {
+      if (!isFinished(saved)) return { label: `Resume S${saved.season} E${saved.episode}`, season: saved.season, episode: saved.episode };
+      const nx = neighbour(seasons, saved.season, saved.episode, 1);
+      if (nx) return { label: `Play S${nx.season} E${nx.episode}`, season: nx.season, episode: nx.episode };
+    }
+    return { label: `Play S${seasons[0].n} E1`, season: seasons[0].n, episode: 1 };
+  }
+
+  async function playFrom(it, imdbId, season, episode) {
+    if (!imdbId) { detailsMsgInline("This one can't be played: it has no IMDb ID."); return; }
+    closeDetails(false);
+    await openStream({ id: it.id, poster_path: it.poster }, it.isMovie, season, episode, it.title, imdbId);
+  }
+  function detailsMsgInline(text) {
+    const m = detailsEl.querySelector('.d-actions-msg');
+    if (m) m.textContent = text;
+  }
+
+  function fmtRuntime(mins) {
+    if (!(mins > 0)) return '';
+    const h = Math.floor(mins / 60), m = mins % 60;
+    return h ? `${h}h${m ? ' ' + m + 'm' : ''}` : `${m}m`;
+  }
+
+  function renderDetails(data, id, isMovie, imdbId, myReq) {
+    const title = isMovie ? data.title : data.name;
+    const year  = ((isMovie ? data.release_date : data.first_air_date) || '').slice(0, 4);
+    const it    = { id, isMovie, title, poster: data.poster_path || null, year };
+    const seasons = isMovie ? [] : parseSeasons(data);
+
+    const meta = [];
+    if (year) meta.push(esc(year));
+    meta.push(isMovie ? 'Film' : 'TV series');
+    if (data.vote_count > 20 && data.vote_average) meta.push(`<span class="star">★</span> ${data.vote_average.toFixed(1)}`);
+    if (isMovie && data.runtime) meta.push(fmtRuntime(data.runtime));
+    if (!isMovie && seasons.length) meta.push(`${seasons.length} season${seasons.length > 1 ? 's' : ''}`);
+    const genres = (data.genres || []).slice(0, 3).map(g => esc(g.name)).join(', ');
+    if (genres) meta.push(genres);
+
+    const hero = detailsEl.querySelector('.d-hero');
+    if (data.backdrop_path) hero.style.backgroundImage = `url("${IMG}w780${data.backdrop_path}")`;
+
+    const target = playTarget(isMovie, imdbId, seasons);
+    const body = detailsEl.querySelector('.d-body');
+    body.innerHTML = `
+      <h2 class="d-title">${esc(title)}</h2>
+      <div class="d-meta">${meta.join(' · ')}</div>
+      ${data.overview ? `<p class="d-overview">${esc(data.overview)}</p>` : ''}
+      <div class="d-actions">
+        ${target && imdbId ? `<button class="stream-btn d-play">▶ ${esc(target.label)}</button>` : ''}
+        <button class="src-btn d-list"></button>
+        <span class="d-msg d-actions-msg">${!imdbId ? "Can't be played: no IMDb ID for this one." : (!isMovie && !seasons.length ? 'No episodes out yet.' : '')}</span>
+      </div>
+      ${!isMovie && seasons.length ? `
+        <div class="section-label">Episodes</div>
+        <div class="d-seasons">${seasons.map(s => `<button class="src-btn d-season" data-n="${s.n}">Season ${s.n}</button>`).join('')}</div>
+        <div class="d-eps"></div>` : ''}
+    `;
+
+    const playBtn = body.querySelector('.d-play');
+    if (playBtn) playBtn.addEventListener('click', () => playFrom(it, imdbId, target.season, target.episode));
+
+    const listBtn = body.querySelector('.d-list');
+    const renderListBtn = () => {
+      const on = inMyList(isMovie, id);
+      listBtn.textContent = on ? '✓ My List' : '+ My List';
+      listBtn.classList.toggle('on', on);
+    };
+    listBtn.addEventListener('click', () => { toggleMyList(it); renderListBtn(); });
+    renderListBtn();
+
+    // Episodes, a season at a time
+    if (!isMovie && seasons.length) {
+      const epsEl = body.querySelector('.d-eps');
+      let shownSeason = null;
+      const showSeason = async n => {
+        shownSeason = n;
+        body.querySelectorAll('.d-season').forEach(b => b.classList.toggle('on', +b.dataset.n === n));
+        const count = (seasons.find(s => s.n === n) || {}).count || 0;
+        epsEl.innerHTML = '<div class="d-msg">Loading episodes…</div>';
+        let eps = seasonCache[id + '_' + n];
+        if (!eps) {
+          try {
+            const d = await tmdb(`tv/${id}/season/${n}`);
+            eps = seasonCache[id + '_' + n] = d.episodes || [];
+          } catch {
+            if (shownSeason === n && myReq === detailsReq) epsEl.innerHTML = `<div class="d-msg">Couldn't load the episodes.</div>`;
+            return;
+          }
+        }
+        if (shownSeason !== n || myReq !== detailsReq) return;
+        const saved = imdbId ? getProgress(imdbId) : null;
+        epsEl.innerHTML = '';
+        eps.filter(e => e.episode_number >= 1 && e.episode_number <= count).forEach(e => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'ep';
+          let bar = '';
+          if (saved && saved.season === n && saved.episode === e.episode_number) {
+            const pct = isFinished(saved) ? 100 : percent(saved);
+            if (pct > 0) bar = `<span class="ep-bar"><i style="width:${pct}%"></i></span>`;
+          }
+          const sub = [fmtRuntime(e.runtime),
+                       e.air_date ? new Date(e.air_date + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '']
+                      .filter(Boolean).join(' · ');
+          b.innerHTML = `
+            <span class="ep-still">${e.still_path ? `<img loading="lazy" src="${IMG}w300${esc(e.still_path)}" alt="">` : ''}${bar}</span>
+            <span class="ep-info">
+              <span class="ep-name">${e.episode_number}. ${esc(e.name || 'Episode ' + e.episode_number)}</span>
+              ${sub ? `<span class="ep-sub">${esc(sub)}</span>` : ''}
+              ${e.overview ? `<span class="ep-desc">${esc(e.overview)}</span>` : ''}
+            </span>`;
+          b.addEventListener('click', () => playFrom(it, imdbId, n, e.episode_number));
+          epsEl.appendChild(b);
+        });
+        if (!epsEl.children.length) epsEl.innerHTML = '<div class="d-msg">No episodes listed for this season.</div>';
+      };
+      body.querySelectorAll('.d-season').forEach(b => b.addEventListener('click', () => showSeason(+b.dataset.n)));
+      showSeason(target && target.season != null ? target.season : seasons[0].n);
+    }
+
+    // More like this
+    const recs = ((data.recommendations && data.recommendations.results) || [])
+      .filter(r => r.poster_path)
+      .slice(0, 15)
+      .map(r => fromTmdb(r, r.media_type ? r.media_type === 'movie' : isMovie));
+    if (recs.length) body.appendChild(makeRow('More like this', recs));
+
+    if (isTvLayout()) navFocus(playBtn || listBtn);
+  }
+
+  // Escape (keyboard) closes the show page
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && detailsEl.classList.contains('open') && !whoEl.classList.contains('open')) closeDetails();
+  });
+
   // ── Logo = home ─────────────────────────────────────────────
   // Closes the video (your spot is saved) and clears the search. Same profile.
   const homeLogo = document.getElementById('homeLogo');
   function goHome() {
+    if (detailsEl.classList.contains('open')) closeDetails(false);
     if (current) closePlayer();
     queryInput.value = '';
     resultsDiv.innerHTML = '';
     statusDiv.textContent = '';
     document.body.classList.remove('playing');
     renderContinue();
+    renderHome();
     window.scrollTo({ top: 0, behavior: 'smooth' });
     if (isTvLayout()) tvStartFocus();
   }
@@ -2341,6 +2621,7 @@
   // Only what's on top counts: the Who's watching screen, or the fullscreen video
   function navItems() {
     const scope = whoEl.classList.contains('open') ? whoEl
+                : detailsEl.classList.contains('open') ? detailsEl
                 : (document.fullscreenElement || (frameWrap.classList.contains('tv-full') ? frameWrap : document));
     const items = [...scope.querySelectorAll(NAV_SEL)];
     if (scope !== document && scope.matches && scope.matches(NAV_SEL)) items.unshift(scope);
@@ -2351,6 +2632,13 @@
     try { el.focus({ preventScroll: true }); } catch { el.focus(); }
     const r = el.getBoundingClientRect();
     if (r.top < 70 || r.bottom > innerHeight - 50) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    // In a row of posters: slide the row along so the highlighted one is in view
+    const track = el.closest && el.closest('.row-track');
+    if (track) {
+      const tr = track.getBoundingClientRect();
+      if (r.left < tr.left + 4) track.scrollBy({ left: r.left - tr.left - 40, behavior: 'smooth' });
+      else if (r.right > tr.right - 4) track.scrollBy({ left: r.right - tr.right + 40, behavior: 'smooth' });
+    }
   }
 
   // Nearest thing in that direction (straight lines win over diagonals)
@@ -2368,10 +2656,28 @@
     // ▲ ▼ stay on their own side (main page or the TV side panel); ◀ ▶ cross between them
     const side = el => !!(el.closest && el.closest('#tvPanel'));
     const curSide = side(cur);
+    // Rows of posters: ◀ ▶ keep to the row you're on (until it ends), and posters
+    // scrolled out of sight in other rows don't count
+    const trackOf = el => el.closest && el.closest('.row-track');
+    const curTrack = trackOf(cur);
+    const inSight = el => {
+      const t = trackOf(el);
+      if (!t || t === curTrack) return true;
+      const r = el.getBoundingClientRect(), tr = t.getBoundingClientRect();
+      return r.left >= tr.left - 2 && r.right <= tr.right + 2;
+    };
+    const horizontal = dir === 'left' || dir === 'right';
+    const rowHasMore = curTrack && horizontal && items.some(el => el !== cur && trackOf(el) === curTrack && (() => {
+      const r = el.getBoundingClientRect(), c = cur.getBoundingClientRect();
+      return dir === 'right' ? r.left >= c.right - 4 : r.right <= c.left + 4;
+    })());
     let best = null, bestScore = Infinity;
+    const cands = [];
     for (const el of items) {
       if (el === cur) continue;
       if ((dir === 'up' || dir === 'down') && side(el) !== curSide) continue;
+      if (!inSight(el)) continue;
+      if (rowHasMore && trackOf(el) !== curTrack) continue;
       const b = el.getBoundingClientRect();
       const bcx = b.left + b.width / 2, bcy = b.top + b.height / 2;
       let along, cross, off;
@@ -2380,9 +2686,19 @@
       if (dir === 'right') { if (b.left < a.right - 4) continue; along = b.left - a.right; }
       if (dir === 'left')  { if (b.right > a.left + 4) continue; along = a.left - b.right; }
       if (dir === 'up' || dir === 'down') { cross = gap(a.left, a.right, b.left, b.right); off = Math.abs(bcx - acx); }
-      else                                { cross = gap(a.top, a.bottom, b.top, b.bottom); off = Math.abs(bcy - acy); }
-      const score = along + cross * 3 + off * 0.1;
-      if (score < bestScore) { bestScore = score; best = el; }
+      else {
+        cross = gap(a.top, a.bottom, b.top, b.bottom); off = Math.abs(bcy - acy);
+        // ◀ ▶ only go to things on the same line (except across into the TV side panel)
+        if (cross > 0 && side(el) === curSide) continue;
+      }
+      cands.push({ el, along, score: along + cross * 3 + off * 0.1, near: cross * 3 + off * 0.1 });
+    }
+    // ▲ ▼: go to the very next line first, then the closest thing on it
+    if (!horizontal && cands.length) {
+      const nextLine = Math.min(...cands.map(c => c.along)) + 24;
+      cands.filter(c => c.along <= nextLine).forEach(c => { if (c.near < bestScore) { bestScore = c.near; best = c.el; } });
+    } else {
+      cands.forEach(c => { if (c.score < bestScore) { bestScore = c.score; best = c.el; } });
     }
     if (best) { navFocus(best); return true; }
     return false;
@@ -2490,6 +2806,10 @@
       if (tile) navFocus(tile);
       return;
     }
+    if (detailsEl.classList.contains('open')) {
+      const b = detailsEl.querySelector('.d-play') || detailsEl.querySelector('.d-close');
+      if (b) { navFocus(b); return; }
+    }
     const first = current ? frameWrap : (continueDiv.querySelector('.stream-btn') || queryInput);
     if (first && first !== queryInput) navFocus(first);
     else { queryInput.blur(); navFocus(searchBtn); }
@@ -2542,7 +2862,21 @@
         } catch {}
       }
     } catch {}
-    return { shows, removed: getRemoved() };
+    return { shows, removed: getRemoved(), list: getMyList() };
+  }
+
+  // My List: newest change wins for each title; "taken off" markers expire like removals
+  function mergeLists(a, b) {
+    const out = {}, now = Date.now();
+    for (const src of [a, b]) {
+      for (const [k, r] of Object.entries((src && src.list) || {})) {
+        if (!r || !r.t) continue;
+        if (r.gone && now - r.t > REMOVED_KEEP) continue;
+        if (!out[k] || r.t > out[k].t) out[k] = r;
+      }
+    }
+    const kept = Object.entries(out).sort((x, y) => y[1].t - x[1].t).slice(0, 200);
+    return Object.fromEntries(kept);
   }
 
   function mergeNotes(a, b) {
@@ -2563,7 +2897,7 @@
     }
     // Keep only the most recent shows
     const keep = Object.entries(shows).sort((x, y) => (y[1].t || 0) - (x[1].t || 0)).slice(0, MAX_SYNCED);
-    return { v: 1, shows: Object.fromEntries(keep), removed };
+    return { v: 1, shows: Object.fromEntries(keep), removed, list: mergeLists(a, b) };
   }
 
   // Write the merged note into this device's storage. Returns true if anything changed.
@@ -2582,6 +2916,8 @@
       }
     }
     setRemoved(note.removed);
+    const listNow = JSON.stringify(local.list || {}), listNew = JSON.stringify(note.list || {});
+    if (listNow !== listNew) { setMyList(note.list || {}); changed = true; }
     return changed;
   }
 
@@ -2589,7 +2925,8 @@
   function sameNote(a, b) {
     const canon = n => JSON.stringify({
       shows: Object.keys(n.shows).sort().map(k => [k, n.shows[k].t, n.shows[k].pos, n.shows[k].season, n.shows[k].episode]),
-      removed: Object.keys(n.removed).sort().map(k => [k, n.removed[k]])
+      removed: Object.keys(n.removed).sort().map(k => [k, n.removed[k]]),
+      list: Object.keys(n.list || {}).sort().map(k => [k, n.list[k].t, !!n.list[k].gone])
     });
     try { return canon(a) === canon(b); } catch { return false; }
   }
@@ -2633,7 +2970,7 @@
       if (!remote || !sameNote(merged, mergeNotes(remote, null))) {
         await writeRemote(merged, leaving);
       }
-      if (changedHere) renderContinue();
+      if (changedHere) { renderContinue(); renderMyListRow(); }
       if (gen === syncGen) setStatus('History synced between devices · up to date ✓', 'ok');
     } catch {
       if (gen === syncGen) {
@@ -2892,6 +3229,7 @@
     } catch {}
     keys.forEach(k => { try { localStorage.removeItem(k); } catch {} });
     setRemoved({});
+    setMyList({});
   }
   function restoreHistory(id) {
     let bundle = null;
@@ -2901,6 +3239,7 @@
         try { localStorage.setItem('vs_progress_' + imdbId, JSON.stringify(rec)); } catch {}
       }
       setRemoved(bundle.removed || {});
+      setMyList(bundle.list || {});
     }
     try { localStorage.removeItem('vs_bundle_' + id); } catch {}
   }
@@ -2924,15 +3263,21 @@
     } catch {}
     renderProfileUI();
     renderContinue();
+    renderMyListRow();
     startSync(to.code);
     if (!keepOpen) closeWho();
   }
 
   // Android app Back button: close the editor / profile screen first
+  // Order: TV fullscreen, then the profile editor / screen, then the show page
   window.vsBack = function () {
     if (frameWrap.classList.contains('tv-full')) { exitAllFullscreen(); return 'handled'; }
     if (whoEl.classList.contains('editing')) { closeEditor(); return 'handled'; }
-    if (whoEl.classList.contains('open') && !whoEl.dataset.startup) { closeWho(); return 'handled'; }
+    if (whoEl.classList.contains('open')) {
+      if (whoEl.dataset.startup) return '';
+      closeWho(); return 'handled';
+    }
+    if (detailsEl.classList.contains('open')) { closeDetails(); return 'handled'; }
     return '';
   };
 
@@ -2966,6 +3311,7 @@
   // Show the Continue watching row on page load (in the side panel on a TV)
   applyTvLayout();
   renderContinue();
+  renderHome();
   if (profiles.length > 1) openWho(true);
   else tvStartFocus();
 
