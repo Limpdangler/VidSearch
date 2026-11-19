@@ -617,6 +617,7 @@
   }
   .jump-bubble.left { left: 8%; }
   .jump-bubble.right { right: 8%; }
+  .jump-bubble.center { left: 50%; transform: translate(-50%, -50%); }
   .jump-bubble.show { opacity: 1; }
 
   /* ── TV layout (Fire Stick) ────────────────────── */
@@ -1673,7 +1674,7 @@
       return;
     }
     if (hm && typeof hm === 'object' && hm.vsHook === 'dbltap' && HOOK && hm.token === HOOK.token) {
-      jumpBy(hm.secs < 0 ? -10 : 10);
+      doubleTap(typeof hm.side === 'number' ? hm.side : Math.sign(hm.secs || 0));
       return;
     }
     if (hm && typeof hm === 'object' && hm.vsHook === 'hello' && HOOK && hm.token === HOOK.token) {
@@ -2329,6 +2330,31 @@
     window.vsSkipBy(secs);
     showJump(secs);
     return true;
+  }
+
+  // Double-tap on the video (phone app):
+  //   not fullscreen → go fullscreen (wherever you tap)
+  //   fullscreen     → left −10 s · middle pause/play · right +10 s
+  let dblFsAt = 0;
+  function doubleTap(side) {
+    if (!current) return;
+    const now = Date.now();
+    if (!document.fullscreenElement) {
+      if (now - dblFsAt > 700) { dblFsAt = now; toggleFullscreen(); }
+      return;
+    }
+    if (now - dblFsAt < 700) return;      // the last taps of the double-tap that went fullscreen
+    if (side === 0) {
+      const r = window.vsPlayPause(!isPlaying, false);
+      if (r === 'playing' || r === 'paused') {
+        jumpBubble.textContent = r === 'playing' ? '▶' : '❚❚';
+        jumpBubble.className = 'jump-bubble show center';
+        clearTimeout(jumpTimer);
+        jumpTimer = setTimeout(() => { jumpBubble.classList.remove('show'); jumpTotal = 0; jumpTimer = null; }, 700);
+      }
+      return;
+    }
+    jumpBy(side < 0 ? -10 : 10);
   }
 
   // OK on the video (TV)
