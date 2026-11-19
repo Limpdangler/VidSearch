@@ -50,6 +50,7 @@
   }
 
   h1 span { color: var(--accent); }
+  .home-logo { cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; }
 
   .subtitle {
     color: var(--muted);
@@ -663,7 +664,7 @@
 <body>
 
 <button id="profileChip" class="profile-chip" title="Switch profile" aria-label="Switch profile"></button>
-<h1>VID<span>SEARCH</span></h1>
+<h1 id="homeLogo" class="home-logo" tabindex="0" role="button" data-nav title="Home">VID<span>SEARCH</span></h1>
 <p class="subtitle" id="tagline"></p>
 <script>
   // Fills in the tagline set at the top of this file
@@ -1261,8 +1262,13 @@
   let hookPauseTries = 0;
   let hookSeen = false;       // has the helper said hello from inside the current player?
 
+  // Player control is always on in the app now. For bug tests, set this to true to bring
+  // back the on/off button (it also shows whether it's connected to the player).
+  const SHOW_HOOK_BTN = false;
+
   function hookEnabled() {
     if (!HOOK) return false;
+    if (!SHOW_HOOK_BTN) return true;
     // Not chosen yet: on for TVs (the remote can't tap a player's own buttons), off otherwise
     try {
       const v = localStorage.getItem('vs_hook');
@@ -1286,7 +1292,7 @@
   }
 
   function renderHookBtn() {
-    hookBtn.style.display = HOOK ? '' : 'none';
+    hookBtn.style.display = HOOK && SHOW_HOOK_BTN ? '' : 'none';
     const on = hookEnabled();
     // While a video is open, also say whether the helper is actually connected to it
     let state = on ? 'on' : 'off';
@@ -2291,6 +2297,24 @@
     }
   }
 
+
+  // ── Logo = home ─────────────────────────────────────────────
+  // Closes the video (your spot is saved) and clears the search. Same profile.
+  const homeLogo = document.getElementById('homeLogo');
+  function goHome() {
+    if (current) closePlayer();
+    queryInput.value = '';
+    resultsDiv.innerHTML = '';
+    statusDiv.textContent = '';
+    document.body.classList.remove('playing');
+    renderContinue();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (isTvLayout()) tvStartFocus();
+  }
+  homeLogo.addEventListener('click', goHome);
+  homeLogo.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goHome(); }
+  });
 
   // ── TV remote: move a highlight around with the arrow buttons ──
   // Whatever's highlighted gets pressed with OK. On the video: OK = Skip intro if it's
