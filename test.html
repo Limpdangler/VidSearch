@@ -542,6 +542,15 @@
   .ep-still img { display: block; width: 100%; height: 100%; object-fit: cover; }
   .ep-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,0.25); }
   .ep-bar i { display: block; height: 100%; background: var(--accent); }
+  .ep-tick {
+    position: absolute; top: 4px; right: 4px; width: 1.4rem; height: 1.4rem; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.75); color: #6fcf8f; font-size: 0.8rem; font-weight: 500;
+  }
+  .new-badge {
+    display: inline-block; margin-right: 0.35rem; padding: 0.08rem 0.4rem; border-radius: 3px;
+    background: var(--accent); color: #fff; font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase; vertical-align: 1px;
+  }
   .ep-info { min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; }
   .ep-name { font-size: 0.9rem; font-weight: 500; }
   .ep-sub { font-size: 0.75rem; color: var(--muted); }
@@ -972,26 +981,47 @@
     } catch { return null; }
   }
 
+  // "Watched" ticks: each show's record also keeps a list of the episodes you've
+  // finished, as "season x episode" (e.g. "2x5")
+  function watchedKey(season, episode) { return season + 'x' + episode; }
+  function watchedSet(rec) { return new Set((rec && Array.isArray(rec.w)) ? rec.w : []); }
+  function isWatched(rec, season, episode) {
+    if (!rec) return false;
+    if (watchedSet(rec).has(watchedKey(season, episode))) return true;
+    // Saved before ticks existed: the episode you last finished still counts
+    return rec.season === season && rec.episode === episode && isFinished(rec);
+  }
+
   function saveProgress(imdbId, info) {
+    const old = getProgress(imdbId);
+    const rec = {
+      season:  info.season,
+      episode: info.episode,
+      title:   info.title,
+      poster:  info.poster || null,
+      tmdbId:  info.tmdbId,
+      isMovie: !!info.isMovie,
+      t:       Date.now(),
+      pos:     info.pos || 0,
+      dur:     info.dur || 0
+    };
+    let w = (old && Array.isArray(old.w)) ? old.w.slice() : [];
+    if (!rec.isMovie && rec.season != null && isFinished(rec)) {
+      const k = watchedKey(rec.season, rec.episode);
+      if (!w.includes(k)) w.push(k);
+    }
+    if (w.length > 400) w = w.slice(-400);
+    if (w.length) rec.w = w;
     try {
-      localStorage.setItem('vs_progress_' + imdbId, JSON.stringify({
-        season:  info.season,
-        episode: info.episode,
-        title:   info.title,
-        poster:  info.poster || null,
-        tmdbId:  info.tmdbId,
-        isMovie: !!info.isMovie,
-        t:       Date.now(),
-        pos:     info.pos || 0,
-        dur:     info.dur || 0
-      }));
+      localStorage.setItem('vs_progress_' + imdbId, JSON.stringify(rec));
     } catch {}
     if (typeof scheduleSync === 'function') scheduleSync();
   }
 
   // "Finished" = within the last 5% (end credits)
+  // Finished = 95% of the way through, or into the last 90 seconds (the end credits)
   function isFinished(p) {
-    return p && p.dur > 0 && p.pos / p.dur > 0.95;
+    return !!(p && p.dur > 0 && (p.pos / p.dur > 0.95 || (p.dur > 600 && p.dur - p.pos < 90)));
   }
 
   // How far through, 0–100 (0 if the length isn't known yet)
@@ -1117,6 +1147,26 @@
         renderContinue();
       });
 
+      // Finished the last episode you watched: offer the next one, and say if it's new
+      if (finished && !show.isMovie) {
+        showSummary(show.tmdbId).then(sum => {
+          if (!card.isConnected) return;
+          const meta = card.querySelector('.result-meta');
+          const btn  = card.querySelector('.stream-btn');
+          const fill = card.querySelector('.progress-fill');
+          const next = neighbour(sum.seasons, show.season, show.episode, 1);
+          if (next) {
+            const isNew = sum.lastAir && Date.parse(sum.lastAir + 'T00:00:00Z') > (show.t || 0);
+            meta.innerHTML = `${isNew ? '<span class="new-badge">New episode</span>' : ''}Up next: S${next.season} E${next.episode}`;
+            btn.textContent = 'Play';
+            if (fill) fill.style.width = '0%';
+          } else {
+            meta.textContent = `S${show.season}E${show.episode} · all caught up`;
+            btn.textContent = 'Watch again';
+          }
+        }).catch(() => {});
+      }
+
       continueDiv.appendChild(card);
     });
   }
@@ -1160,6 +1210,28 @@
         .catch(err => { delete showCache[tmdbId]; throw err; }); // allow a retry later
     }
     return showCache[tmdbId];
+  }
+
+  // What Continue watching needs to know about a show: its seasons, and when its latest
+  // episode came out. Saved on the device for 3 hours (one small request per show).
+  const SUMMARY_KEEP = 3 * 3600 * 1000;
+  async function showSummary(tmdbId) {
+    const key = 'vs_show_' + tmdbId;
+    try {
+      const c = JSON.parse(localStorage.getItem(key) || 'null');
+      if (c && Date.now() - c.at < SUMMARY_KEEP && Array.isArray(c.seasons)) return c;
+    } catch {}
+    const data = await tmdb(`tv/${tmdbId}`, '&append_to_response=external_ids');
+    const sum = {
+      at: Date.now(),
+      seasons: parseSeasons(data),
+      lastAir: (data.last_episode_to_air && data.last_episode_to_air.air_date) || null
+    };
+    if (!showCache[tmdbId]) {
+      showCache[tmdbId] = Promise.resolve({ seasons: sum.seasons, imdbId: (data.external_ids && data.external_ids.imdb_id) || null });
+    }
+    try { localStorage.setItem(key, JSON.stringify(sum)); } catch {}
+    return sum;
   }
 
   async function getSeasons(tmdbId) {
@@ -2524,11 +2596,14 @@
           b.type = 'button';
           b.className = 'ep';
           let bar = '';
-          if (saved && saved.season === n && saved.episode === e.episode_number) {
-            const pct = isFinished(saved) ? 100 : percent(saved);
+          const watched = isWatched(saved, n, e.episode_number);
+          if (watched) {
+            bar = `<span class="ep-bar"><i style="width:100%"></i></span><span class="ep-tick" title="Watched">✓</span>`;
+          } else if (saved && saved.season === n && saved.episode === e.episode_number) {
+            const pct = percent(saved);
             if (pct > 0) bar = `<span class="ep-bar"><i style="width:${pct}%"></i></span>`;
           }
-          const sub = [fmtRuntime(e.runtime),
+          const sub = [watched ? 'Watched' : '', fmtRuntime(e.runtime),
                        e.air_date ? new Date(e.air_date + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '']
                       .filter(Boolean).join(' · ');
           b.innerHTML = `
@@ -2880,7 +2955,7 @@
   }
 
   function mergeNotes(a, b) {
-    const shows = {}, removed = {};
+    const shows = {}, removed = {}, ticks = {};
     const now = Date.now();
     for (const src of [a, b]) {
       for (const [id, t] of Object.entries((src && src.removed) || {})) {
@@ -2888,8 +2963,13 @@
       }
       for (const [id, rec] of Object.entries((src && src.shows) || {})) {
         if (!rec || !rec.title) continue;
+        if (Array.isArray(rec.w)) (ticks[id] = ticks[id] || new Set()) && rec.w.forEach(k => ticks[id].add(k));
         if (!shows[id] || (rec.t || 0) > (shows[id].t || 0)) shows[id] = rec;
       }
+    }
+    // Watched ticks from both devices are combined
+    for (const [id, set] of Object.entries(ticks)) {
+      if (shows[id] && set.size) shows[id] = { ...shows[id], w: [...set].slice(-400) };
     }
     // A removal beats anything saved before it
     for (const id of Object.keys(shows)) {
@@ -2908,6 +2988,9 @@
       const mine = local.shows[id];
       if (!mine || (rec.t || 0) > (mine.t || 0)) {
         try { localStorage.setItem('vs_progress_' + id, JSON.stringify(rec)); changed = true; } catch {}
+      } else if (Array.isArray(rec.w) && rec.w.length > ((mine.w && mine.w.length) || 0)) {
+        // Same or older spot, but the other device has ticked more episodes
+        try { localStorage.setItem('vs_progress_' + id, JSON.stringify({ ...mine, w: rec.w })); changed = true; } catch {}
       }
     }
     for (const id of Object.keys(note.removed)) {
@@ -2924,7 +3007,7 @@
   // Compare two notes regardless of the order things are listed in
   function sameNote(a, b) {
     const canon = n => JSON.stringify({
-      shows: Object.keys(n.shows).sort().map(k => [k, n.shows[k].t, n.shows[k].pos, n.shows[k].season, n.shows[k].episode]),
+      shows: Object.keys(n.shows).sort().map(k => [k, n.shows[k].t, n.shows[k].pos, n.shows[k].season, n.shows[k].episode, (n.shows[k].w || []).length]),
       removed: Object.keys(n.removed).sort().map(k => [k, n.removed[k]]),
       list: Object.keys(n.list || {}).sort().map(k => [k, n.list[k].t, !!n.list[k].gone])
     });
