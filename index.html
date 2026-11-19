@@ -828,37 +828,6 @@
       // no controls
     },
 
-    vidnest: {
-      name: 'VidNest',
-      url(info, startAt, autoplay) {
-        // VidNest takes TMDB ids. t = start time in seconds, autoplay=1 starts by itself.
-        let url = info.isMovie
-          ? `https://vidnest.pro/movie/${info.tmdbId}`
-          : `https://vidnest.pro/tv/${info.tmdbId}/${info.season}/${info.episode}`;
-        const p = [`autoplay=${autoplay ? 1 : 0}`];
-        if (startAt > 0) p.push(`t=${startAt}`);
-        return url + '?' + p.join('&');
-      },
-      // Messages are tagged source: 'vidnest-player'; events play/pause/seeked/ended/timeupdate,
-      // with currentTime + duration; 'episodechange' has season + episode.
-      read(msg) {
-        if (msg.source !== 'vidnest-player') return null;
-        const d = (msg.data && typeof msg.data === 'object') ? { ...msg, ...msg.data } : msg;
-        const ev = String(d.event || d.type || d.action || d.name || '').toLowerCase();
-        const map = { play: 'playing', playing: 'playing', timeupdate: 'playing', pause: 'paused',
-                      paused: 'paused', seeked: 'seeked', ended: 'ended', playerstatus: d.paused ? 'paused' : 'playing' };
-        return {
-          status: map[ev] || ev,
-          pos: num(d.currentTime ?? d.time), dur: num(d.duration),
-          season: num(d.season), episode: num(d.episode),
-          episodeChange: ev === 'episodechange'
-        };
-      },
-      seek(t) { sendToPlayer({ action: 'seek', time: t }); },
-      resume() { sendToPlayer({ action: 'play' }); },
-      pause() { sendToPlayer({ action: 'pause' }); }
-    },
-
     vidrift: {
       name: 'VidRift',
       url(info, startAt, autoplay) {
@@ -897,10 +866,40 @@
       seek(t) { sendToPlayer({ type: 'vidrift:resume', currentTime: t }); },
       resume() { sendToPlayer({ type: 'vidrift:play' }); },
       pause() { sendToPlayer({ type: 'vidrift:pause' }); }
+    },
+    vidnest: {
+      name: 'VidNest',
+      url(info, startAt, autoplay) {
+        // VidNest takes TMDB ids. t = start time in seconds, autoplay=1 starts by itself.
+        let url = info.isMovie
+          ? `https://vidnest.pro/movie/${info.tmdbId}`
+          : `https://vidnest.pro/tv/${info.tmdbId}/${info.season}/${info.episode}`;
+        const p = [`autoplay=${autoplay ? 1 : 0}`];
+        if (startAt > 0) p.push(`t=${startAt}`);
+        return url + '?' + p.join('&');
+      },
+      // Messages are tagged source: 'vidnest-player'; events play/pause/seeked/ended/timeupdate,
+      // with currentTime + duration; 'episodechange' has season + episode.
+      read(msg) {
+        if (msg.source !== 'vidnest-player') return null;
+        const d = (msg.data && typeof msg.data === 'object') ? { ...msg, ...msg.data } : msg;
+        const ev = String(d.event || d.type || d.action || d.name || '').toLowerCase();
+        const map = { play: 'playing', playing: 'playing', timeupdate: 'playing', pause: 'paused',
+                      paused: 'paused', seeked: 'seeked', ended: 'ended', playerstatus: d.paused ? 'paused' : 'playing' };
+        return {
+          status: map[ev] || ev,
+          pos: num(d.currentTime ?? d.time), dur: num(d.duration),
+          season: num(d.season), episode: num(d.episode),
+          episodeChange: ev === 'episodechange'
+        };
+      },
+      seek(t) { sendToPlayer({ action: 'seek', time: t }); },
+      resume() { sendToPlayer({ action: 'play' }); },
+      pause() { sendToPlayer({ action: 'pause' }); }
     }
   };
 
-  const DEFAULT_SOURCE = 'vidnest';
+  const DEFAULT_SOURCE = 'vidsrc';
 
   function getSourceKey() {
     try {
@@ -1713,6 +1712,7 @@
       if (!hookReady && hd > 0) {
         hookReady = true;
         renderHookBtn();
+        hookSend('lock');      // the video's playing: stop ads dropping web pages into the player
         // Start at the right point, and play / stay paused as asked
         if (hookStartAt > 0 && Math.abs(hp - hookStartAt) > 15) hookSend('seek', { t: hookStartAt });
         if (hookWantPlay && hm.paused) hookSend('play');
