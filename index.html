@@ -525,6 +525,8 @@
   .tile:hover .tile-poster, .tile:focus .tile-poster { transform: scale(1.04); }
   .tile:hover .tile-title, .tile:focus .tile-title { color: var(--text); }
   .row-msg { color: var(--muted); font-size: 0.8rem; padding: 0.5rem 0; }
+  .row-track .row-msg { min-height: 12.5rem; }   /* a row waiting to load takes its real space */
+  body.tv .row-track .row-msg { min-height: 11rem; }
   /* ‹ › arrows at the ends of a row (computers with a mouse only; phones swipe, the TV uses the remote) */
   .row-wrap { position: relative; }
   .row-btn {
@@ -588,6 +590,16 @@
   .ep-sub { font-size: 0.75rem; color: var(--muted); }
   .ep-desc { font-size: 0.78rem; color: #aaa; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .d-msg { color: var(--muted); font-size: 0.85rem; }
+  .d-hero.short { aspect-ratio: auto; height: 5.5rem; }
+  .d-hero.short::after { display: none; }
+  .tile.person .tile-poster, .tile.person .no-art { border-radius: 8px; }
+  .tile-role { display: block; font-size: 0.7rem; color: #777; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .person-head { display: flex; gap: 1rem; align-items: flex-start; }
+  .person-photo { flex: none; width: 7.5rem; aspect-ratio: 2 / 3; border-radius: 8px; object-fit: cover; background: var(--surface2); }
+  .person-bio { font-size: 0.88rem; line-height: 1.5; color: #ccc; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+  .person-bio.full { display: block; }
+  .d-more { align-self: flex-start; }
+  @media (max-width: 600px) { .person-photo { width: 6rem; } }
   .d-body .section-label { margin-top: 0.6rem; }
   body.tv .d-hero { max-height: 46vh; }
   @media (max-width: 600px) {
@@ -2430,20 +2442,41 @@
   }
 
   // The rows on the home screen. Each is one small request, saved on the device for 3 hours.
+  // Genre rows: popular, well-rated titles that are already out. Kids, family and
+  // animation are left out of all of them.
+  const NO_KIDS = '&without_genres=16,10751,10762&sort_by=popularity.desc&vote_count.gte=150';
+  function genreRow(label, isMovie, genres) {
+    const today = new Date().toISOString().slice(0, 10);
+    return {
+      label, isMovie, path: `discover/${isMovie ? 'movie' : 'tv'}`,
+      query: `&with_genres=${genres}${NO_KIDS}&${isMovie ? 'release_date' : 'first_air_date'}.lte=${today}`
+    };
+  }
+
   const HOME_ROWS = [
     { label: 'Trending this week', path: 'trending/all/week' },
     { label: 'Popular shows',      path: 'tv/popular',      isMovie: false },
-    { label: 'Top rated films',    path: 'movie/top_rated', isMovie: true }
+    { label: 'Top rated films',    path: 'movie/top_rated', isMovie: true },
+    genreRow('Action & adventure films', true,  '28|12'),
+    genreRow('Comedy films',             true,  '35'),
+    genreRow('Comedy shows',             false, '35'),
+    genreRow('Crime shows',              false, '80'),
+    genreRow('Drama shows',              false, '18'),
+    genreRow('Sci-fi & fantasy shows',   false, '10765'),
+    genreRow('Sci-fi films',             true,  '878'),
+    genreRow('Horror films',             true,  '27'),
+    genreRow('Thrillers',                true,  '53'),
+    genreRow('Documentaries',            true,  '99')
   ];
   const ROW_KEEP = 3 * 3600 * 1000;
 
   async function rowItems(row) {
-    const key = 'vs_cache2_' + row.path.replace(/\W/g, '_');
+    const key = 'vs_cache2_' + (row.path + (row.query ? '_' + row.label : '')).replace(/\W/g, '_');
     try {
       const c = JSON.parse(localStorage.getItem(key) || 'null');
       if (c && Date.now() - c.at < ROW_KEEP && Array.isArray(c.items) && c.items.length) return c.items.filter(isOut);
     } catch {}
-    const data = await tmdb(row.path);
+    const data = await tmdb(row.path, row.query || '');
     const items = (data.results || [])
       .filter(r => row.isMovie !== undefined || r.media_type === 'movie' || r.media_type === 'tv')
       .filter(r => r.poster_path)
@@ -2462,18 +2495,26 @@
     if (old) old.replaceWith(sec); else homeEl.prepend(sec);
   }
 
+  // Rows further down only load when you scroll (or move the highlight) close to them
+  const rowWatcher = 'IntersectionObserver' in window
+    ? new IntersectionObserver(entries => entries.forEach(en => {
+        if (en.isIntersecting) { rowWatcher.unobserve(en.target); en.target._load && en.target._load(); }
+      }), { rootMargin: '900px 0px' })
+    : null;
+
   let homeBuilt = false, homeFailed = false;
   function renderHome() {
     renderMyListRow();
+    renderBecause();
     if (homeBuilt && !homeFailed) return;
     homeBuilt = true; homeFailed = false;
-    homeEl.querySelectorAll('.row:not(#rowMyList)').forEach(el => el.remove());
-    HOME_ROWS.forEach(row => {
+    homeEl.querySelectorAll('.row:not(#rowMyList):not(.because)').forEach(el => el.remove());
+    HOME_ROWS.forEach((row, i) => {
       const sec = makeRow(row.label, []);
       const track = sec.querySelector('.row-track');
       track.innerHTML = '<div class="row-msg">Loading…</div>';
       homeEl.appendChild(sec);
-      rowItems(row).then(items => {
+      sec._load = () => rowItems(row).then(items => {
         if (!items.length) { sec.remove(); return; }
         track.innerHTML = '';
         items.forEach(it => track.appendChild(makeTile(it)));
@@ -2481,16 +2522,67 @@
         homeFailed = true;           // try again next time you go home
         track.innerHTML = `<div class="row-msg">Couldn't load this row. Check your connection.</div>`;
       });
+      if (i < 3 || !rowWatcher) sec._load();
+      else rowWatcher.observe(sec);
+    });
+  }
+
+  // ── "Because you watched …" ──
+  // Suggestions based on the two things this profile watched most recently (TMDB's
+  // recommendations for each, saved for 6 hours). Things you've already watched are left out.
+  const RECS_KEEP = 6 * 3600 * 1000;
+  async function recsFor(id, isMovie) {
+    const key = 'vs_recs_' + (isMovie ? 'm' : 't') + id;
+    try {
+      const c = JSON.parse(localStorage.getItem(key) || 'null');
+      if (c && Date.now() - c.at < RECS_KEEP && Array.isArray(c.items)) return c.items.filter(isOut);
+    } catch {}
+    const data = await tmdb(`${isMovie ? 'movie' : 'tv'}/${id}/recommendations`);
+    const items = (data.results || [])
+      .filter(r => r.poster_path)
+      .map(r => fromTmdb(r, r.media_type ? r.media_type === 'movie' : isMovie))
+      .filter(isOut)
+      .slice(0, 20);
+    try { localStorage.setItem(key, JSON.stringify({ at: Date.now(), items })); } catch {}
+    return items;
+  }
+
+  let becauseReq = 0;
+  function renderBecause() {
+    const myReq = ++becauseReq;
+    const history = getAllProgress().filter(p => p.tmdbId);
+    const seen = new Set(history.map(p => (p.isMovie ? 'm' : 't') + p.tmdbId));
+    const picks = history.slice(0, 2);
+    const keepIds = new Set(picks.map(p => 'because-' + (p.isMovie ? 'm' : 't') + p.tmdbId));
+    homeEl.querySelectorAll('.row.because').forEach(el => { if (!keepIds.has(el.id)) el.remove(); });
+    picks.forEach((p, i) => {
+      const id = 'because-' + (p.isMovie ? 'm' : 't') + p.tmdbId;
+      recsFor(p.tmdbId, !!p.isMovie).then(items => {
+        if (myReq !== becauseReq) return;
+        items = items.filter(it => !seen.has((it.isMovie ? 'm' : 't') + it.id));
+        const old = document.getElementById(id);
+        if (items.length < 3) { if (old) old.remove(); return; }
+        const sec = makeRow('Because you watched ' + p.title, items, id);
+        sec.classList.add('because');
+        sec.dataset.order = i;
+        if (old) { old.replaceWith(sec); return; }
+        // Straight after My List, in order (most recent first)
+        const later = [...homeEl.querySelectorAll('.row.because')].find(r => +r.dataset.order > i);
+        const firstOther = homeEl.querySelector('.row:not(#rowMyList):not(.because)');
+        homeEl.insertBefore(sec, later || firstOther || null);
+      }).catch(() => {});
     });
   }
 
   // ── Show page ──
   let detailsReq = 0;
   let detailsReturn = null;          // what was highlighted before (TV), to go back to
+  let detailsStack = [];             // pages opened on top of each other: { id, isMovie } or { person }
   const seasonCache = {};
 
   function closeDetails(backToWhereYouWere) {
     detailsReq++;
+    detailsStack = [];
     detailsEl.classList.remove('open');
     document.body.classList.remove('details-open');
     if (isTvLayout()) {
@@ -2507,10 +2599,21 @@
     if (body) body.innerHTML = `<div class="d-msg">${esc(text)}</div>`;
   }
 
-  async function openDetails(id, isMovie) {
-    const myReq = ++detailsReq;
+  // Back (remote / phone / Esc) on a show or actor page: the page before, or close
+  function detailsBack() {
+    if (detailsStack.length > 1) {
+      detailsStack.pop();
+      const prev = detailsStack[detailsStack.length - 1];
+      if (prev.person) loadPerson(prev.person); else loadTitle(prev.id, prev.isMovie);
+      return;
+    }
+    closeDetails();
+  }
+
+  // An empty page with a ✕ and "Loading…", while the information arrives
+  function detailsShell(short) {
     if (!detailsEl.classList.contains('open')) detailsReturn = document.activeElement;
-    detailsEl.innerHTML = `<div class="d-hero"><button class="d-close" aria-label="Close">✕</button></div>
+    detailsEl.innerHTML = `<div class="d-hero${short ? ' short' : ''}"><button class="d-close" aria-label="Close">✕</button></div>
       <div class="d-body"><div class="d-msg">Loading…</div></div>`;
     detailsEl.querySelector('.d-close').addEventListener('click', () => closeDetails());
     detailsEl.classList.add('open');
@@ -2518,10 +2621,22 @@
     detailsEl.scrollTop = 0;
     if (isTvLayout()) navFocus(detailsEl.querySelector('.d-close'));
     else try { detailsEl.querySelector('.d-close').focus({ preventScroll: true }); } catch {}
+  }
+
+  function openDetails(id, isMovie) {
+    if (!detailsEl.classList.contains('open')) detailsStack = [];
+    detailsStack.push({ id, isMovie });
+    return loadTitle(id, isMovie);
+  }
+
+  async function loadTitle(id, isMovie) {
+    const myReq = ++detailsReq;
+    detailsShell(false);
 
     let data;
     try {
-      data = await tmdb(`${isMovie ? 'movie' : 'tv'}/${id}`, '&append_to_response=external_ids,recommendations');
+      data = await tmdb(`${isMovie ? 'movie' : 'tv'}/${id}`,
+        `&append_to_response=external_ids,recommendations,${isMovie ? 'credits' : 'aggregate_credits'}`);
     } catch {
       if (myReq === detailsReq) detailsMsg("Couldn't load this. Check your connection and try again.");
       return;
@@ -2563,6 +2678,85 @@
     if (!(mins > 0)) return '';
     const h = Math.floor(mins / 60), m = mins % 60;
     return h ? `${h}h${m ? ' ' + m + 'm' : ''}` : `${m}m`;
+  }
+
+
+  // ── Cast and actor pages ──
+  function makePersonTile(c, role) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'tile person';
+    b.innerHTML = (c.profile_path
+        ? `<img class="tile-poster" loading="lazy" src="${IMG}w185${esc(c.profile_path)}" alt="">`
+        : `<span class="no-art">${esc(c.name)}</span>`) +
+      `<span class="tile-title">${esc(c.name)}</span>` +
+      (role ? `<span class="tile-role">${esc(role)}</span>` : '');
+    b.addEventListener('click', () => openPerson(c.id));
+    return b;
+  }
+
+  function openPerson(id) {
+    detailsStack.push({ person: id });
+    return loadPerson(id);
+  }
+
+  async function loadPerson(id) {
+    const myReq = ++detailsReq;
+    detailsShell(true);
+    let p;
+    try {
+      p = await tmdb(`person/${id}`, '&append_to_response=combined_credits');
+    } catch {
+      if (myReq === detailsReq) detailsMsg("Couldn't load this. Check your connection and try again.");
+      return;
+    }
+    if (myReq !== detailsReq) return;
+
+    const credits = p.combined_credits || {};
+    // Their films and shows, most popular first (chat shows, news and awards shows left out)
+    const SKIP_TV = [10763, 10767];
+    const seenIds = new Set();
+    const titles = [...(credits.cast || []), ...((credits.cast || []).length < 5 ? (credits.crew || []) : [])]
+      .filter(r => r.poster_path && (r.media_type === 'movie' || r.media_type === 'tv'))
+      .filter(r => !(r.media_type === 'tv' && (r.genre_ids || []).some(g => SKIP_TV.includes(g))))
+      .filter(r => { const k = r.media_type + r.id; if (seenIds.has(k)) return false; seenIds.add(k); return true; })
+      .sort((a, b) => (b.popularity || 0) - (a.popularity || 0))
+      .map(r => fromTmdb(r))
+      .filter(isOut);
+    const films = titles.filter(t => t.isMovie).slice(0, 20);
+    const shows = titles.filter(t => !t.isMovie).slice(0, 20);
+
+    const facts = [];
+    if (p.known_for_department) facts.push(esc(p.known_for_department === 'Acting' ? 'Actor' : p.known_for_department));
+    if (p.birthday) facts.push('Born ' + new Date(p.birthday + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }));
+    if (p.place_of_birth) facts.push(esc(p.place_of_birth));
+
+    const body = detailsEl.querySelector('.d-body');
+    body.innerHTML = `
+      <div class="person-head">
+        ${p.profile_path ? `<img class="person-photo" src="${IMG}w185${esc(p.profile_path)}" alt="">` : ''}
+        <div style="display:flex;flex-direction:column;gap:.5rem;min-width:0">
+          <h2 class="d-title">${esc(p.name || '')}</h2>
+          <div class="d-meta">${facts.join(' · ')}</div>
+        </div>
+      </div>
+      ${p.biography ? `<p class="person-bio">${esc(p.biography)}</p><button class="src-btn d-more">More</button>` : ''}`;
+    const bio = body.querySelector('.person-bio'), more = body.querySelector('.d-more');
+    if (bio && more) {
+      // Only offer "More" if the text is actually cut short
+      requestAnimationFrame(() => { if (bio.scrollHeight <= bio.clientHeight + 2) more.remove(); });
+      more.addEventListener('click', () => {
+        const full = bio.classList.toggle('full');
+        more.textContent = full ? 'Less' : 'More';
+      });
+    }
+    if (films.length) body.appendChild(makeRow('Films', films));
+    if (shows.length) body.appendChild(makeRow('TV shows', shows));
+    if (!films.length && !shows.length) body.insertAdjacentHTML('beforeend', '<div class="d-msg">Nothing to show for them yet.</div>');
+
+    const first = body.querySelector('.tile') || body.querySelector('.d-more') || detailsEl.querySelector('.d-close');
+    if (isTvLayout()) navFocus(first);
+    else try { first.focus({ preventScroll: true }); } catch {}
   }
 
   function renderDetails(data, id, isMovie, imdbId, myReq) {
@@ -2670,6 +2864,19 @@
       showSeason(target && target.season != null ? target.season : seasons[0].n);
     }
 
+    // Cast (tap someone to see what else they've been in)
+    const castList = ((isMovie ? data.credits : data.aggregate_credits) || {}).cast || [];
+    const cast = castList.filter(c => c.profile_path).slice(0, 15);
+    if (cast.length) {
+      const sec = makeRow('Cast', []);
+      const track = sec.querySelector('.row-track');
+      cast.forEach(c => {
+        const role = isMovie ? c.character : ((c.roles && c.roles[0] && c.roles[0].character) || '');
+        track.appendChild(makePersonTile(c, role));
+      });
+      body.appendChild(sec);
+    }
+
     // More like this
     const recs = ((data.recommendations && data.recommendations.results) || [])
       .filter(r => r.poster_path)
@@ -2684,7 +2891,7 @@
 
   // Escape (keyboard) closes the show page
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && detailsEl.classList.contains('open') && !whoEl.classList.contains('open')) closeDetails();
+    if (e.key === 'Escape' && detailsEl.classList.contains('open') && !whoEl.classList.contains('open')) detailsBack();
   });
 
   // ── Logo = home ─────────────────────────────────────────────
@@ -3124,7 +3331,7 @@
       if (!remote || !sameNote(merged, mergeNotes(remote, null))) {
         await writeRemote(merged, leaving);
       }
-      if (changedHere) { renderContinue(); renderMyListRow(); }
+      if (changedHere) { renderContinue(); renderMyListRow(); renderBecause(); }
       if (gen === syncGen) setStatus('History synced between devices · up to date ✓', 'ok');
     } catch {
       if (gen === syncGen) {
@@ -3418,6 +3625,7 @@
     renderProfileUI();
     renderContinue();
     renderMyListRow();
+    renderBecause();
     startSync(to.code);
     if (!keepOpen) closeWho();
   }
@@ -3431,7 +3639,7 @@
       if (whoEl.dataset.startup) return '';
       closeWho(); return 'handled';
     }
-    if (detailsEl.classList.contains('open')) { closeDetails(); return 'handled'; }
+    if (detailsEl.classList.contains('open')) { detailsBack(); return 'handled'; }
     return '';
   };
 
