@@ -558,6 +558,8 @@
   .d-title { font-family: 'Bebas Neue', sans-serif; font-weight: 400; font-size: clamp(2.1rem, 6vw, 3.4rem); letter-spacing: 0.04em; line-height: 1; }
   .d-meta { color: #999; font-size: 0.85rem; }
   .d-meta .star { color: #f4c542; }
+  .imdb-badge { background: #f5c518; color: #000; font-weight: 700; font-size: 0.7rem; padding: 0.05rem 0.3rem; border-radius: 3px; letter-spacing: 0.02em; }
+  .mc-badge { background: #66cc33; color: #000; font-weight: 700; font-size: 0.72rem; padding: 0.05rem 0.3rem; border-radius: 3px; }
   .d-overview { font-size: 0.92rem; line-height: 1.5; color: #ccc; max-width: 70ch; }
   .d-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
   .d-play { background: var(--accent); color: #fff; padding: 0.55rem 1.4rem; font-size: 1.1rem; }
@@ -839,6 +841,8 @@
   // TMDB API KEY
   // ============================================
   const TMDB_API_KEY = '9c2f0a71e20cf0f5c14709ed2d1ec9e0';
+  // OMDb (free, 1,000 lookups a day): IMDb, Rotten Tomatoes and Metacritic scores for show pages
+  const OMDB_KEY = 'f7086c7a';
 
   // ============================================
   // STREAMING URL BASE
@@ -2674,6 +2678,28 @@
     if (m) m.textContent = text;
   }
 
+  // IMDb, Rotten Tomatoes and Metacritic scores from OMDb. Saved for a week per title; a
+  // failed lookup (e.g. the day's 1,000 used up) is retried after an hour.
+  async function omdbRatings(imdbId) {
+    const key = 'vs_omdb_' + imdbId;
+    try {
+      const c = JSON.parse(localStorage.getItem(key) || 'null');
+      if (c && Date.now() - c.at < (c.ok ? 7 * 24 : 1) * 3600 * 1000) return c.ok ? c : null;
+    } catch {}
+    let out = { at: Date.now(), ok: false };
+    try {
+      const res = await fetch(`https://www.omdbapi.com/?i=${encodeURIComponent(imdbId)}&apikey=${OMDB_KEY}`);
+      const d = await res.json();
+      if (d && d.Response === 'True') {
+        const clean = v => (v && v !== 'N/A') ? v : null;
+        const rt = (d.Ratings || []).find(x => x.Source === 'Rotten Tomatoes');
+        out = { at: Date.now(), ok: true, imdb: clean(d.imdbRating), rt: rt ? clean(rt.Value) : null, mc: clean(d.Metascore) };
+      }
+    } catch {}
+    try { localStorage.setItem(key, JSON.stringify(out)); } catch {}
+    return out.ok ? out : null;
+  }
+
   function fmtRuntime(mins) {
     if (!(mins > 0)) return '';
     const h = Math.floor(mins / 60), m = mins % 60;
@@ -2768,7 +2794,11 @@
     const meta = [];
     if (year) meta.push(esc(year));
     meta.push(isMovie ? 'Film' : 'TV series');
-    if (data.vote_count > 20 && data.vote_average) meta.push(`<span class="star">★</span> ${data.vote_average.toFixed(1)}`);
+    // Ratings: IMDb / Rotten Tomatoes / Metacritic fill in once OMDb answers; until then
+    // (or if it can't), TMDB's own ★ rating
+    const tmdbStar = data.vote_count > 20 && data.vote_average
+      ? `<span class="star">★</span> ${data.vote_average.toFixed(1)}` : '';
+    meta.push(`<span class="d-ratings">${tmdbStar}</span>`);
     if (isMovie && data.runtime) meta.push(fmtRuntime(data.runtime));
     if (!isMovie && seasons.length) meta.push(`${seasons.length} season${seasons.length > 1 ? 's' : ''}`);
     const genres = (data.genres || []).slice(0, 3).map(g => esc(g.name)).join(', ');
@@ -2798,6 +2828,18 @@
         <div class="d-seasons">${seasons.map(s => `<button class="src-btn d-season" data-n="${s.n}">Season ${s.n}</button>`).join('')}</div>
         <div class="d-eps"></div>` : ''}
     `;
+
+    if (imdbId && OMDB_KEY) {
+      omdbRatings(imdbId).then(r => {
+        const el = body.querySelector('.d-ratings');
+        if (!el || myReq !== detailsReq || !r) return;
+        const parts = [];
+        if (r.imdb) parts.push(`<span class="imdb-badge">IMDb</span> ${esc(r.imdb)}`);
+        if (r.rt)   parts.push(`🍅 ${esc(r.rt)}`);
+        if (r.mc)   parts.push(`<span class="mc-badge">${esc(r.mc)}</span> Metacritic`);
+        if (parts.length) el.innerHTML = parts.join(' · ');
+      });
+    }
 
     const playBtn = body.querySelector('.d-play');
     if (playBtn) playBtn.addEventListener('click', () => playFrom(it, imdbId, target.season, target.episode));
