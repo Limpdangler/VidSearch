@@ -2313,9 +2313,28 @@
   nextBtn.addEventListener('click', () => step(1));
   document.getElementById('fsBtn').addEventListener('click', toggleFullscreen);
 
-  // Fire TV remote (the app passes these on): ≡ = fullscreen on/off, ⏪ ⏩ = 10 seconds
+  // Fire TV remote (the app passes these on): ≡ = fullscreen on/off.
+  // ⏪ ⏩ = previous / next episode for shows (◀ ▶ already do 10 seconds); films have no
+  // episodes, so there they still jump 10 seconds.
   window.vsToggleFullscreen = function () { if (current) toggleFullscreen(); };
-  window.vsJump = function (secs) { return jumpBy(Number(secs) || 0) ? 'ok' : 'none'; };
+  window.vsJump = function (secs) {
+    secs = Number(secs) || 0;
+    if (current && !current.isMovie && secs) { remoteEpisode(secs > 0 ? 1 : -1); return 'ok'; }
+    return jumpBy(secs) ? 'ok' : 'none';
+  };
+  async function remoteEpisode(dir) {
+    const playing = current;
+    const seasons = await getSeasons(playing.tmdbId);
+    if (current !== playing) return;
+    const target = neighbour(seasons, playing.season, playing.episode, dir);
+    // Say what's happening in the little bubble, so a stray press isn't a mystery
+    jumpBubble.textContent = target ? `${dir > 0 ? 'Next' : 'Previous'}: S${target.season} · E${target.episode}`
+                                    : (dir > 0 ? 'No next episode' : 'This is the first episode');
+    jumpBubble.className = 'jump-bubble show ' + (dir > 0 ? 'right' : 'left');
+    clearTimeout(jumpTimer);
+    jumpTimer = setTimeout(() => { jumpBubble.classList.remove('show'); jumpTotal = 0; jumpTimer = null; }, 1500);
+    if (target) step(dir);
+  }
 
   // The Android app's Back button is about to take you out of fullscreen (on purpose)
   window.vsLeavingFullscreen = function () { fsLeaveAt = Date.now(); };
@@ -3712,18 +3731,29 @@
     return { shows, removed: getRemoved(), list: getMyList() };
   }
 
-  // My List: newest change wins for each title; "taken off" markers expire like removals
+  // My List: newest change wins for each title, with one exception: a film that came in
+  // from a Letterboxd import never beats you taking it off. Once it's imported, the file
+  // has no say: only you (or the + My List button) can put it back.
+  // "Taken off" markers are kept for a year and don't count towards the 200-title limit,
+  // so a removal can't be pushed out by a long list.
+  const LIST_GONE_KEEP = 365 * 24 * 3600 * 1000;
   function mergeLists(a, b) {
     const out = {}, now = Date.now();
     for (const src of [a, b]) {
       for (const [k, r] of Object.entries((src && src.list) || {})) {
         if (!r || !r.t) continue;
-        if (r.gone && now - r.t > REMOVED_KEEP) continue;
-        if (!out[k] || r.t > out[k].t) out[k] = r;
+        if (r.gone && now - r.t > LIST_GONE_KEEP) continue;
+        const have = out[k];
+        if (!have) { out[k] = r; continue; }
+        if (r.gone && have.from === 'letterboxd') { out[k] = r; continue; }
+        if (have.gone && r.from === 'letterboxd') continue;
+        if (r.t > have.t) out[k] = r;
       }
     }
-    const kept = Object.entries(out).sort((x, y) => y[1].t - x[1].t).slice(0, 200);
-    return Object.fromEntries(kept);
+    const all = Object.entries(out).sort((x, y) => y[1].t - x[1].t);
+    const live = all.filter(([, r]) => !r.gone).slice(0, 200);
+    const gone = all.filter(([, r]) => r.gone).slice(0, 400);
+    return Object.fromEntries([...live, ...gone]);
   }
 
   function mergeNotes(a, b) {
