@@ -1898,6 +1898,15 @@
         .catch(() => hookSend('fsFallback'));   // refused: let the player use its own fullscreen
       return;
     }
+    // The helper found the whole player box had been swapped for an ad page: reload the
+    // player where you were (at most once every 20 seconds, so it can never loop)
+    if (hm && typeof hm === 'object' && hm.vsHookAd === 'remove' && HOOK && hm.token === HOOK.token) {
+      if (current && e.source === playerFrame.contentWindow && Date.now() - adReloadAt > 20000) {
+        adReloadAt = Date.now();
+        play({ ...current, startAt: resumeHere(), autoplay: true });
+      }
+      return;
+    }
     if (hm && typeof hm === 'object' && hm.vsHook === 'key' && HOOK && hm.token === HOOK.token) {
       youMovedIt();
       tvKeyFromPlayer(String(hm.key || ''));
@@ -2120,6 +2129,7 @@
   // you out of fullscreen right after you touch the video, and it wasn't you leaving on
   // purpose (✕, Back, the fullscreen button), go straight back in.
   var lastPlayerTap = 0, fsLeaveAt = 0, inOurFs = false;
+  var adReloadAt = 0;
   document.addEventListener('fullscreenchange', () => {
     const was = inOurFs;
     inOurFs = document.fullscreenElement === frameWrap;
