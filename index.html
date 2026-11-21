@@ -1109,9 +1109,13 @@
     }
     if (w.length > 400) w = w.slice(-400);
     if (w.length) rec.w = w;
+    // Just reached the end (it wasn't finished a moment ago)?
+    const wasDone = old && isFinished(old) && (old.season ?? null) === (rec.season ?? null) &&
+                    (old.episode ?? null) === (rec.episode ?? null);
     try {
       localStorage.setItem('vs_progress_' + imdbId, JSON.stringify(rec));
     } catch {}
+    if (isFinished(rec) && !wasDone && typeof doneWatching === 'function') doneWatching(rec);
     if (typeof scheduleSync === 'function') scheduleSync();
   }
 
@@ -1313,7 +1317,8 @@
       showCache[tmdbId] = tmdb(`tv/${tmdbId}`, '&append_to_response=external_ids')
         .then(data => ({
           seasons: parseSeasons(data),
-          imdbId:  (data.external_ids && data.external_ids.imdb_id) || null
+          imdbId:  (data.external_ids && data.external_ids.imdb_id) || null,
+          ended:   data.status === 'Ended' || data.status === 'Canceled'
         }))
         .catch(err => { delete showCache[tmdbId]; throw err; }); // allow a retry later
     }
@@ -2549,6 +2554,30 @@
   function myListItems() {
     return Object.values(getMyList()).filter(r => r && !r.gone && r.id).sort((a, b) => (b.t || 0) - (a.t || 0));
   }
+  // Watched to the end → off My List:
+  //   a film, as soon as you reach the end credits;
+  //   a show, only once it's finished for good (ended or cancelled) and you've reached the
+  //   end of its very last episode, so shows still running stay on your list.
+  // (Very short lengths are ignored, in case a player reports a wrong one.)
+  async function doneWatching(rec) {
+    if (!rec || !rec.tmdbId || !inMyList(rec.isMovie, rec.tmdbId)) return;
+    if (rec.isMovie) {
+      if (rec.dur < 1800) return;
+    } else {
+      if (rec.dur < 600) return;
+      try {
+        const show = await getShow(rec.tmdbId);
+        if (!show.ended || neighbour(show.seasons, rec.season, rec.episode, 1)) return;
+      } catch { return; }
+    }
+    if (!inMyList(rec.isMovie, rec.tmdbId)) return;
+    const list = getMyList();
+    list[listKey(rec.isMovie, rec.tmdbId)] = { gone: true, t: Date.now() };
+    setMyList(list);
+    renderMyListRow();
+    if (typeof scheduleSync === 'function') scheduleSync(1000);
+  }
+
   function toggleMyList(it) {
     const list = getMyList();
     const key = listKey(it.isMovie, it.id);
