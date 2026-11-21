@@ -1673,6 +1673,7 @@
     skipBtn.classList.remove('visible');
     const src = SOURCES[current.sourceKey || getSourceKey()];
     const to  = Math.ceil(seg.end);
+    youMovedIt();
 
     if (ctlSeek(src, to)) {
       // This player takes commands (or the helper is on): jump straight there, no reload
@@ -1688,6 +1689,14 @@
   let startFix = null;
   // Starting from the beginning on purpose: early positions count straight away
   let restartOk = false;
+  // When you last touched the player or moved the video yourself (taps, remote buttons,
+  // the notification card, Skip intro). A big jump back without that = the player did it.
+  let userMovedAt = 0;
+  function youMovedIt() { userMovedAt = Date.now(); }
+  document.addEventListener('keydown', youMovedIt, true);
+  document.addEventListener('pointerdown', e => { if (e.target && e.target.closest && e.target.closest('#player')) youMovedIt(); }, true);
+  // Putting the video back after the player jumped back by itself (a few tries, then give up)
+  let fixBackTimer = null, fixBackTries = 0, fixBackFor = '';
 
   function play(info) {
     cancelUpNext();
@@ -1696,6 +1705,8 @@
     lastPos = Math.floor(info.startAt || 0);
     lastPosAt = Date.now();
     isPlaying = false;
+    clearTimeout(fixBackTimer); fixBackTimer = null;
+    if (fixBackFor !== epKey(info)) { fixBackFor = epKey(info); fixBackTries = 0; }
     loadSkips(info);
 
     // Something's been picked: clear the search results so the video sits at the top
@@ -1888,14 +1899,17 @@
       return;
     }
     if (hm && typeof hm === 'object' && hm.vsHook === 'key' && HOOK && hm.token === HOOK.token) {
+      youMovedIt();
       tvKeyFromPlayer(String(hm.key || ''));
       return;
     }
     if (hm && typeof hm === 'object' && hm.vsHook === 'tap' && HOOK && hm.token === HOOK.token) {
       lastPlayerTap = Date.now();
+      youMovedIt();
       return;
     }
     if (hm && typeof hm === 'object' && hm.vsHook === 'dbltap' && HOOK && hm.token === HOOK.token) {
+      youMovedIt();
       doubleTap(typeof hm.side === 'number' ? hm.side : Math.sign(hm.secs || 0));
       return;
     }
@@ -1927,7 +1941,7 @@
         hookPauseTries++;
         hookSend('pause');
       }
-      handlePlayerUpdate({ status: hm.ended ? 'ended' : (hm.paused ? 'paused' : 'playing'), pos: hp, dur: hd });
+      handlePlayerUpdate({ status: hm.ended ? 'ended' : (hm.paused ? 'paused' : 'playing'), pos: hp, dur: hd, fromHook: true });
       return;
     }
 
@@ -1999,14 +2013,21 @@
 
     // Reloaded at your spot (e.g. pressing play in the floating window), but the player
     // started from the beginning anyway: jump it to your spot
+    // (Once it's got there, this job's done: slipping back later is caught further down.)
+    if (startFix && pos >= startFix.t - 20) startFix = null;
     if (startFix && Date.now() < startFix.until && u.status !== 'seeked' && pos < startFix.t - 20) {
       const src = SOURCES[current.sourceKey || getSourceKey()];
-      if (src && src.seek && isFinite(dur) && dur > startFix.t) {
-        const t = startFix.t;
-        startFix = null;
-        src.seek(t);
+      if (src && isFinite(dur) && dur > startFix.t && Date.now() - (startFix.at || 0) > 3000 &&
+          (startFix.tries || 0) < 4) {
+        // Tell it both ways (the player's own command and, in the app, the helper),
+        // then check again a few seconds later in case it didn't take
+        startFix.tries = (startFix.tries || 0) + 1;
+        startFix.at = Date.now();
+        if (src.seek) src.seek(startFix.t);
+        if (hookActive()) hookSend('seek', { t: startFix.t });
         return;
       }
+      if (startFix.tries) return;   // waiting to see if the jump worked
     }
 
     // Players report 0 for a moment while loading, and after a long pause a stream can
@@ -2017,7 +2038,32 @@
     // back to the start happens while playing. If you really did go back while paused, it
     // counts once you've played past 15 seconds.)
     const inPip = !!document.getElementById('vs-pip');
-    const youDragged = u.status === 'seeked' && isPlaying && !inPip;
+    // In the app the helper sees your taps, so a jump only counts as yours if you touched
+    // the player. On the website it can't, so the player's own "seeked" is all there is.
+    const touched = Date.now() - userMovedAt < 15000;
+    const youDragged = u.status === 'seeked' && isPlaying && !inPip && (!HOOK || touched);
+    if (!HOOK && u.status === 'seeked' && !inPip && document.visibilityState === 'visible') youMovedIt();
+
+    // The player jumped a long way back by itself — its stream restarted after a pause,
+    // or it went back to an older spot it remembered — and you didn't touch it: wait a
+    // moment (in case it was you after all), then put it back where you were.
+    if (sameEp && !restartOk && saved.pos > 30 && pos < saved.pos - 30 && !isFinished(saved) &&
+        Date.now() - userMovedAt > 15000 && fixBackTries < 3) {
+      if (!fixBackTimer) {
+        const want = Math.floor(saved.pos), ep = epKey(current);
+        fixBackTimer = setTimeout(() => {
+          fixBackTimer = null;
+          if (!current || epKey(current) !== ep || Date.now() - userMovedAt < 15000) return;
+          fixBackTries++;
+          const s = SOURCES[current.sourceKey || getSourceKey()];
+          if (hookActive()) hookSend('seek', { t: want });
+          if (s && s.seek) s.seek(want);
+          lastPos = want; lastPosAt = Date.now();
+        }, 1500);
+      }
+      return;   // don't save the wrong spot
+    }
+    if (fixBackTimer && !(pos < saved.pos - 30)) { clearTimeout(fixBackTimer); fixBackTimer = null; }
     if (sameEp && !restartOk && !youDragged && saved.pos > 10 &&
         (pos < 1 || (pos < 15 && saved.pos > 60))) return;
     if (pos > 15) restartOk = false;
@@ -2219,6 +2265,12 @@
   // Reloading the player to resume only works for players that start by themselves
   // (VidNest, VidRift). vidsrc reloads to its cover picture and waits for a tap, so it's
   // resumed with a plain "play" instead.
+  // Where to pick up when the player is reloaded: where it was, or your saved spot if
+  // that's further on (the player may have slipped back by itself while paused)
+  function resumeHere() {
+    const saved = getProgress(current.imdbId);
+    return Math.max(Math.floor(lastPos), resumePoint(saved, current.season, current.episode));
+  }
   function resumeByReload() { return (current.sourceKey || getSourceKey()) !== 'vidsrc'; }
 
   window.vsPipToggle = function () {
@@ -2233,7 +2285,7 @@
     }
     // Play: reload the player where it was paused (like the ⟳ button). Android often takes
     // a paused video's picture away in the floating window, and a plain "play" leaves it black.
-    if (resumeByReload()) play({ ...current, startAt: Math.floor(lastPos), autoplay: true });
+    if (resumeByReload()) play({ ...current, startAt: resumeHere(), autoplay: true });
     else ctlPlay(src);
     isPlaying = true;
     lastPosAt = Date.now();
@@ -2251,7 +2303,7 @@
       return 'paused';
     }
     if (isPlaying) return 'playing';
-    if (reload && resumeByReload()) play({ ...current, startAt: Math.floor(lastPos), autoplay: true });
+    if (reload && resumeByReload()) play({ ...current, startAt: resumeHere(), autoplay: true });
     else ctlPlay(src);
     isPlaying = true;
     lastPosAt = Date.now();
@@ -2296,6 +2348,7 @@
     if (!current) return 'none';
     const src = SOURCES[current.sourceKey || getSourceKey()];
     t = Math.max(0, Math.floor(Number(t) || 0));
+    youMovedIt();
     if (!ctlSeek(src, t)) play({ ...current, startAt: t, autoplay: true });
     lastPos = t; lastPosAt = Date.now();
     return 'ok';
