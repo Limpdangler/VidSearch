@@ -1234,12 +1234,23 @@
 
   // Turns TMDB's show info into [{ n: seasonNumber, count: episodeCount }],
   // leaving out episodes that haven't aired yet (they wouldn't play anyway).
+  // "Out" = aired, or airing within the next 2 days. The film database's note of the
+  // latest aired episode updates late, and streaming services often release before the
+  // TV date, so a brand-new episode (or season) shows up straight away.
+  function soonISO() { return new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10); }
+
   function parseSeasons(data) {
     let seasons = (data.seasons || [])
       .filter(s => s.season_number > 0 && s.episode_count > 0)
       .map(s => ({ n: s.season_number, count: s.episode_count }));
 
-    const last = data.last_episode_to_air;
+    let last = data.last_episode_to_air;
+    const next = data.next_episode_to_air;
+    if (next && next.season_number > 0 && next.air_date && next.air_date <= soonISO() &&
+        (!last || next.season_number > last.season_number ||
+         (next.season_number === last.season_number && next.episode_number > last.episode_number))) {
+      last = next;
+    }
     if (last && last.season_number > 0) {
       seasons = seasons
         .filter(s => s.n <= last.season_number)
@@ -2875,7 +2886,8 @@
         if (shownSeason !== n || myReq !== detailsReq) return;
         const saved = imdbId ? getProgress(imdbId) : null;
         epsEl.innerHTML = '';
-        eps.filter(e => e.episode_number >= 1 && e.episode_number <= count).forEach(e => {
+        const soon = soonISO();
+        eps.filter(e => e.episode_number >= 1 && (e.episode_number <= count || (e.air_date && e.air_date <= soon))).forEach(e => {
           const b = document.createElement('button');
           b.type = 'button';
           b.className = 'ep';
