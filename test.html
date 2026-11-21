@@ -506,6 +506,27 @@
 
 
 
+
+  /* Loading screen over the player */
+  .load-cover {
+    position: absolute; inset: 0; z-index: 3; display: none; align-items: center; justify-content: center;
+    background: #000; pointer-events: none; opacity: 1; transition: opacity 0.45s; overflow: hidden;
+  }
+  .load-cover.on { display: flex; }
+  .load-cover.done { opacity: 0; }
+  .lc-bg { position: absolute; inset: -24px; background: center / cover no-repeat; filter: blur(14px) brightness(0.35); }
+  .lc-logo { position: relative; width: 56%; max-width: 520px; display: grid; place-items: center; }
+  .lc-logo > * { grid-area: 1 / 1; }
+  .lc-logo img { width: 100%; max-height: 38vh; object-fit: contain; }
+  .lc-text {
+    font-family: 'Bebas Neue', sans-serif; font-size: clamp(1.8rem, 7vw, 4.2rem); letter-spacing: 0.05em;
+    line-height: 1; color: #fff; text-align: center; padding: 0 0.5rem;
+  }
+  .lc-base { opacity: 0.22; filter: grayscale(1) brightness(1.5); }
+  .lc-fill { clip-path: inset(0 100% 0 0); }
+  .load-cover.going .lc-fill { clip-path: inset(0 10% 0 0); transition: clip-path 12s cubic-bezier(0.35, 0.45, 0.45, 1); }
+  .load-cover.ready .lc-fill { clip-path: inset(0 0 0 0); transition: clip-path 0.35s ease-out; }
+
   /* ── Home screen rows ──────────────────────────── */
   .home { width: 100%; max-width: 960px; display: flex; flex-direction: column; gap: 1.4rem; margin-bottom: 2rem; }
   .home:empty { display: none; }
@@ -746,6 +767,14 @@
 <div id="player" class="player">
   <div class="player-frame">
     <iframe id="playerFrame" allowfullscreen allow="autoplay; fullscreen; encrypted-media; picture-in-picture"></iframe>
+    <!-- Loading screen: the title's logo filling in while the video loads -->
+    <div id="loadCover" class="load-cover">
+      <div class="lc-bg"></div>
+      <div class="lc-logo">
+        <img class="lc-base" alt=""><img class="lc-fill" alt="">
+        <span class="lc-text lc-base"></span><span class="lc-text lc-fill"></span>
+      </div>
+    </div>
     <!-- Up next box: appears in the corner near the end of an episode -->
     <div id="upNext" class="up-next">
       <div class="up-next-text">
@@ -802,6 +831,11 @@
     <button id="whoSwitch" class="src-btn">Switch / edit</button>
   </div>
   <div id="syncStatus" class="sync-status"></div>
+  <div class="sync-row">
+    <button id="lbImport" class="src-btn" title="Add your Letterboxd watchlist to this profile's My List">Import Letterboxd watchlist</button>
+    <input type="file" id="lbFile" accept=".zip,.csv,text/csv,application/zip" hidden>
+  </div>
+  <div id="lbStatus" class="sync-status">On letterboxd.com: Settings → Data → Export your data. Then pick that zip here to add the films to this profile's My List.</div>
   <div class="sync-row"><button id="tvToggle" class="src-btn" title="Bigger layout for a TV remote, with Continue watching down the side"></button></div>
 </div>
 
@@ -1409,6 +1443,7 @@
   let hookLoadAt = 0;
   let hookPauseTries = 0;
   let hookSeen = false;       // has the helper said hello from inside the current player?
+  let hookUnmutes = 0;        // times we've turned the sound on for this video
 
   // Player control is always on in the app now. For bug tests, set this to true to bring
   // back the on/off button (it also shows whether it's connected to the player).
@@ -1695,6 +1730,11 @@
     }
   }
 
+  // Starting at a saved spot: make sure the player really goes there (see handlePlayerUpdate)
+  let startFix = null;
+  // Starting from the beginning on purpose: early positions count straight away
+  let restartOk = false;
+
   function play(info) {
     cancelUpNext();
     upNextDoneFor = null;
@@ -1714,10 +1754,12 @@
     // (anything you tap = yes; the Up next countdown running out = no).
     const startAt  = Math.floor(info.startAt || 0);
     const autoplay = info.autoplay !== false;
+    startFix = (info.startAt || 0) > 15 ? { t: Math.floor(info.startAt), until: Date.now() + 30000 } : null;
+    restartOk = (info.startAt || 0) < 15;
     const src      = SOURCES[getSourceKey()];
     current.sourceKey = getSourceKey();
     hookReady = false; hookWantPlay = autoplay; hookStartAt = startAt;
-    hookLoadAt = Date.now(); hookPauseTries = 0; hookSeen = false;
+    hookLoadAt = Date.now(); hookPauseTries = 0; hookSeen = false; hookUnmutes = 0;
     setTimeout(() => { if (current === info) renderHookBtn(); }, 8500);
     // Some players (vidsrc) open on a cover picture and wait for a tap. When the video should
     // start by itself, ask the helper to press the player's start button until the video shows up.
@@ -1729,6 +1771,7 @@
 
     applySandbox(getSourceKey()); // must be set before loading so it applies
     playerFrame.src = src.url(info, startAt, autoplay);
+    showLoadCover(info, autoplay);
 
     // Sources without a start-time setting get told once the player has loaded
     if (src.startAtByMessage && startAt > 0) {
@@ -1910,6 +1953,9 @@
     if (hm && typeof hm === 'object' && hm.vsHook === 'state' && HOOK && hm.token === HOOK.token) {
       if (!hookEnabled()) return;
       hookSeen = true;
+      // Some players start muted so they're allowed to play by themselves. The app doesn't
+      // need that, so turn the sound on (once, at the start: after that, mute is your call).
+      if (hm.muted && hookUnmutes < 2 && Date.now() - hookLoadAt < 20000) { hookUnmutes++; hookSend('unmute'); }
       const hd = Number(hm.dur) || 0;
       const hp = Number(hm.pos) || 0;
       if (hd > 0 && hd < 90) return;               // a short clip (an ad), not the show
@@ -1984,6 +2030,8 @@
     const pos = u.pos;
     const dur = u.dur == null ? NaN : u.dur;
     if (pos == null) return;
+    // The player's running (or loaded and waiting): the loading screen can go
+    if (u.status === 'playing' || (isFinite(dur) && dur > 90)) finishLoadCover();
 
     // Ignore reports about a different episode (e.g. a late message after pressing Next)
     if (!current.isMovie) {
@@ -1992,11 +2040,34 @@
     }
 
 
-    // Players report 0 for a moment while loading — don't let that wipe a saved spot
     const saved = getProgress(current.imdbId);
-    if (pos < 1 && saved && saved.pos > 10 &&
-        (saved.season ?? null) === (current.season ?? null) &&
-        (saved.episode ?? null) === (current.episode ?? null)) return;
+    const sameEp = saved && (saved.season ?? null) === (current.season ?? null) &&
+                   (saved.episode ?? null) === (current.episode ?? null);
+
+    // Reloaded at your spot (e.g. pressing play in the floating window), but the player
+    // started from the beginning anyway: jump it to your spot
+    if (startFix && Date.now() < startFix.until && u.status !== 'seeked' && pos < startFix.t - 20) {
+      const src = SOURCES[current.sourceKey || getSourceKey()];
+      if (src && src.seek && isFinite(dur) && dur > startFix.t) {
+        const t = startFix.t;
+        startFix = null;
+        src.seek(t);
+        return;
+      }
+    }
+
+    // Players report 0 for a moment while loading, and after a long pause a stream can
+    // quietly restart and report a few seconds in. Neither should wipe your saved spot:
+    // a jump back near the start only counts if you dragged there yourself (or chose to
+    // start over).
+    // (A stream restarting by itself happens while paused or in the floating window; a drag
+    // back to the start happens while playing. If you really did go back while paused, it
+    // counts once you've played past 15 seconds.)
+    const inPip = !!document.getElementById('vs-pip');
+    const youDragged = u.status === 'seeked' && isPlaying && !inPip;
+    if (sameEp && !restartOk && !youDragged && saved.pos > 10 &&
+        (pos < 1 || (pos < 15 && saved.pos > 60))) return;
+    if (pos > 15) restartOk = false;
 
     saveProgress(current.imdbId, {
       ...current,
@@ -2167,6 +2238,7 @@
     cancelUpNext();
     exitAllFullscreen();
     playerFrame.src = 'about:blank';
+    clearLoadTimers(); hideLoadCover(true);
     playerEl.classList.remove('visible');
     document.body.classList.remove('playing', 'watching');
     current = null;
@@ -2995,6 +3067,237 @@
     if (e.key === 'Escape' && detailsEl.classList.contains('open') && !whoEl.classList.contains('open')) detailsBack();
   });
 
+
+  // ── Loading screen: the title's logo, see-through, filling in as the video loads ──
+  // The logo (the official title artwork) comes from TMDB and is saved for 30 days. The
+  // fill isn't real progress (players don't say how far along they are): it moves on its
+  // own, slowing near the end, and completes the moment the player says it's ready.
+  const loadCover = document.getElementById('loadCover');
+  const lcBg = loadCover.querySelector('.lc-bg');
+  const lcImgs = loadCover.querySelectorAll('.lc-logo img');
+  const lcTexts = loadCover.querySelectorAll('.lc-text');
+  let loadCoverFor = null, loadCoverTimers = [];
+
+  async function titleArt(info) {
+    const key = 'vs_art_' + (info.isMovie ? 'm' : 't') + info.tmdbId;
+    try {
+      const c = JSON.parse(localStorage.getItem(key) || 'null');
+      if (c && Date.now() - c.at < 30 * 86400000) return c;
+    } catch {}
+    const d = await tmdb(`${info.isMovie ? 'movie' : 'tv'}/${info.tmdbId}/images`, '&include_image_language=en,null');
+    const byVotes = (a, b) => (b.vote_average || 0) - (a.vote_average || 0);
+    const logos = (d.logos || []).filter(l => l.file_path && !/\.svg$/i.test(l.file_path));
+    const logo = logos.filter(l => l.iso_639_1 === 'en').sort(byVotes)[0] || logos.sort(byVotes)[0];
+    const back = (d.backdrops || []).filter(b => b.file_path).sort(byVotes)[0];
+    const art = { at: Date.now(), logo: logo ? logo.file_path : null, backdrop: back ? back.file_path : null };
+    try { localStorage.setItem(key, JSON.stringify(art)); } catch {}
+    return art;
+  }
+
+  function clearLoadTimers() { loadCoverTimers.forEach(clearTimeout); loadCoverTimers = []; }
+
+  function showLoadCover(info, autoplay) {
+    clearLoadTimers();
+    if (document.getElementById('vs-pip')) { hideLoadCover(true); return; }   // not in the floating window
+    loadCoverFor = info;
+    loadCover.className = 'load-cover on';
+    lcBg.style.backgroundImage = '';
+    lcImgs.forEach(i => { i.removeAttribute('src'); i.style.display = 'none'; });
+    lcTexts.forEach(t => { t.textContent = info.title || ''; t.style.display = 'none'; });
+    void loadCover.offsetWidth;                       // start the fill from empty
+    loadCover.classList.add('going');
+
+    // (the fill starts from empty whenever the logo or the title text first appears)
+    const restartFill = () => { loadCover.classList.remove('going'); void loadCover.offsetWidth; if (!loadCover.classList.contains('ready')) loadCover.classList.add('going'); };
+    const showText = () => {
+      if (loadCoverFor !== info || lcImgs[0].style.display !== 'none' || lcTexts[0].style.display !== 'none') return;
+      lcTexts.forEach(t => t.style.display = '');
+      restartFill();
+    };
+    titleArt(info).then(art => {
+      if (loadCoverFor !== info) return;
+      if (art.backdrop) lcBg.style.backgroundImage = `url("${IMG}w780${art.backdrop}")`;
+      if (art.logo) {
+        const src = `${IMG}w500${art.logo}`;
+        lcImgs[0].onload = () => {
+          if (loadCoverFor !== info) return;
+          lcTexts.forEach(t => t.style.display = 'none');
+          lcImgs.forEach(i => i.style.display = '');
+          restartFill();
+        };
+        lcImgs[0].onerror = showText;
+        lcImgs.forEach(i => { i.src = src; });
+      } else showText();
+    }).catch(showText);
+    loadCoverTimers.push(setTimeout(showText, 900));  // no logo yet: show the title in big letters
+
+    // When to step aside without being told it's ready:
+    //  - the video won't start by itself (it's waiting for you): as soon as the player has loaded
+    //  - vidsrc in a browser (it waits for a tap on its own play button): shortly after loading
+    //  - anything else: after 25 seconds at most
+    const noHelperVidsrc = (info.sourceKey || getSourceKey()) === 'vidsrc' && !(HOOK && hookEnabled());
+    playerFrame.addEventListener('load', () => {
+      if (loadCoverFor !== info) return;
+      if (!autoplay) finishLoadCover();
+      else if (noHelperVidsrc) loadCoverTimers.push(setTimeout(finishLoadCover, 1500));
+    }, { once: true });
+    loadCoverTimers.push(setTimeout(finishLoadCover, 25000));
+  }
+
+  // Ready: finish the fill, then fade away
+  function finishLoadCover() {
+    if (!loadCover.classList.contains('on') || loadCover.classList.contains('ready')) return;
+    clearLoadTimers();
+    loadCover.classList.add('ready');
+    loadCoverTimers.push(setTimeout(() => loadCover.classList.add('done'), 380));
+    loadCoverTimers.push(setTimeout(() => hideLoadCover(true), 850));
+  }
+  function hideLoadCover(now) {
+    loadCoverFor = null;
+    loadCover.className = 'load-cover';
+  }
+
+  // ── Letterboxd watchlist import ──
+  // Letterboxd doesn't let other sites read watchlists, but it lets you export your data:
+  // letterboxd.com → Settings → Data → Export your data. Pick that zip (or the watchlist.csv
+  // inside it) and the films are matched against TMDB and added to this profile's My List.
+  // Re-importing only adds new films; films you've taken off My List aren't put back.
+  const lbBtn = document.getElementById('lbImport');
+  const lbFile = document.getElementById('lbFile');
+  const lbStatus = document.getElementById('lbStatus');
+  let lbBusy = false;
+
+  function lbSay(text, kind) {
+    lbStatus.textContent = text;
+    lbStatus.className = 'sync-status' + (kind ? ' ' + kind : '');
+  }
+
+  // A spreadsheet (CSV) into rows, minding "quoted, values"
+  function parseCsv(text) {
+    const rows = []; let row = [], cell = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) {
+        if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+        else cell += c;
+      } else if (c === '"') q = true;
+      else if (c === ',') { row.push(cell); cell = ''; }
+      else if (c === '\n' || c === '\r') {
+        if (c === '\r' && text[i + 1] === '\n') i++;
+        row.push(cell); cell = '';
+        if (row.some(x => x !== '')) rows.push(row);
+        row = [];
+      } else cell += c;
+    }
+    row.push(cell);
+    if (row.some(x => x !== '')) rows.push(row);
+    return rows;
+  }
+
+  function loadZipReader() {
+    if (window.JSZip) return Promise.resolve(window.JSZip);
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+      s.onload = () => window.JSZip ? resolve(window.JSZip) : reject(new Error('zip'));
+      s.onerror = () => reject(new Error('zip'));
+      document.head.appendChild(s);
+    });
+  }
+
+  async function lbReadWatchlist(file) {
+    if (/\.zip$/i.test(file.name) || file.type === 'application/zip' || file.type === 'application/x-zip-compressed') {
+      const JSZip = await loadZipReader();
+      const zip = await JSZip.loadAsync(file);
+      const entry = Object.values(zip.files).find(f => /(^|\/)watchlist\.csv$/i.test(f.name));
+      if (!entry) throw new Error('nowatchlist');
+      return entry.async('string');
+    }
+    return file.text();
+  }
+
+  const normTitle = s => (s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]/g, '');
+  async function lbMatch(name, year) {
+    const q = encodeURIComponent(name);
+    let res = (await tmdb('search/movie', `&query=${q}${year ? '&year=' + year : ''}`)).results || [];
+    if (!res.length && year) res = (await tmdb('search/movie', `&query=${q}`)).results || [];
+    const sameYear = r => year && (r.release_date || '').startsWith(year);
+    const best = res.find(r => normTitle(r.title) === normTitle(name) && sameYear(r))
+              || res.find(r => (normTitle(r.title) === normTitle(name) || normTitle(r.original_title) === normTitle(name)))
+              || res.find(sameYear)
+              || res[0];
+    return best ? fromTmdb(best, true) : null;
+  }
+
+  async function lbImport(file) {
+    if (lbBusy) return;
+    lbBusy = true;
+    const who = activeProfile().name;
+    try {
+      lbSay('Reading the file…');
+      let text;
+      try { text = await lbReadWatchlist(file); }
+      catch (e) {
+        lbSay(e.message === 'nowatchlist' ? "That zip doesn't have a watchlist in it (watchlist.csv)."
+            : e.message === 'zip' ? "Couldn't open the zip. Try picking the watchlist.csv from inside it instead."
+            : "Couldn't read that file.", 'err');
+        return;
+      }
+      const rows = parseCsv(text.replace(/^﻿/, ''));
+      const head = (rows.shift() || []).map(h => h.trim().toLowerCase());
+      const iName = head.indexOf('name'), iYear = head.indexOf('year'), iDate = head.indexOf('date');
+      if (iName < 0) { lbSay("That doesn't look like a Letterboxd watchlist (no Name column).", 'err'); return; }
+      const films = rows.map(r => ({ name: (r[iName] || '').trim(), year: (r[iYear] || '').trim(), date: (r[iDate] || '').trim() }))
+                        .filter(f => f.name);
+      if (!films.length) { lbSay('The watchlist is empty.', 'err'); return; }
+
+      // Match each film (four at a time)
+      const found = new Array(films.length), missed = [];
+      let done = 0, next = 0;
+      const worker = async () => {
+        while (next < films.length) {
+          const i = next++;
+          try { found[i] = await lbMatch(films[i].name, films[i].year); } catch { found[i] = null; }
+          if (!found[i]) missed.push(films[i].name + (films[i].year ? ` (${films[i].year})` : ''));
+          done++;
+          if (done % 5 === 0 || done === films.length) lbSay(`Matching films… ${done} of ${films.length}`);
+        }
+      };
+      await Promise.all([worker(), worker(), worker(), worker()]);
+
+      // Add to My List, keeping Letterboxd's order (newest added first)
+      const list = getMyList();
+      let added = 0, already = 0, removedBefore = 0;
+      films.forEach((f, i) => {
+        const it = found[i];
+        if (!it) return;
+        const key = listKey(true, it.id);
+        const have = list[key];
+        if (have && !have.gone) { already++; return; }
+        if (have && have.gone) { removedBefore++; return; }
+        const when = Date.parse(f.date) || 0;
+        list[key] = { id: it.id, isMovie: true, title: it.title, poster: it.poster || null, year: it.year || '',
+                      t: (when || Date.now()) + i, from: 'letterboxd' };
+        added++;
+      });
+      setMyList(list);
+      renderMyListRow();
+      if (typeof scheduleSync === 'function') scheduleSync(1000);
+
+      const bits = [`Added ${added} film${added === 1 ? '' : 's'} to ${who}'s My List.`];
+      if (already) bits.push(`${already} already there.`);
+      if (removedBefore) bits.push(`${removedBefore} skipped (taken off My List before).`);
+      if (missed.length) bits.push(`Couldn't find ${missed.length}: ${missed.slice(0, 8).join(', ')}${missed.length > 8 ? '…' : ''}`);
+      lbSay(bits.join(' '), added ? 'ok' : '');
+    } finally {
+      lbBusy = false;
+      lbFile.value = '';
+    }
+  }
+
+  lbBtn.addEventListener('click', () => { if (!lbBusy) lbFile.click(); });
+  lbFile.addEventListener('change', () => { if (lbFile.files && lbFile.files[0]) lbImport(lbFile.files[0]); });
+
   // ── Logo = home ─────────────────────────────────────────────
   // Closes the video (your spot is saved) and clears the search. Same profile.
   const homeLogo = document.getElementById('homeLogo');
@@ -3775,7 +4078,9 @@
   applyTvLayout();
   renderContinue();
   renderHome();
-  if (profiles.length > 1) openWho(true);
+  // "Who's watching?" when the app opens: on the TV only (on a phone, the last profile
+  // carries on; tap your icon at the top to switch)
+  if (profiles.length > 1 && isTvLayout()) openWho(true);
   else tvStartFocus();
 
   // Switch on the app helper (sw.js) so the site can be installed as an app
