@@ -1975,6 +1975,8 @@
     // Skip intro and Up next stay visible. Works whether or not Player control is switched on.
     if (hm && typeof hm === 'object' && hm.vsHook === 'fullscreen' && HOOK && hm.token === HOOK.token) {
       hookSend('fsAck');
+      // Pressed the player's own fullscreen button with the remote: that means "leave"
+      if (playerMenu) { endPlayerMenu(); exitAllFullscreen(); return; }
       if (inAnyFullscreen()) { exitAllFullscreen(); return; }
       if (isTvLayout()) { setTvFull(true); return; }
       frameWrap.requestFullscreen()
@@ -1988,6 +1990,18 @@
       if (current && e.source === playerFrame.contentWindow && Date.now() - adReloadAt > 20000) {
         adReloadAt = Date.now();
         play({ ...current, startAt: resumeHere(), autoplay: true });
+      }
+      return;
+    }
+    // Where to tap for the button you pressed with OK (only just after pressing it)
+    if (hm && typeof hm === 'object' && hm.vsHook === 'tapUp' && HOOK && hm.token === HOOK.token) {
+      if (playerMenu && e.source === playerFrame.contentWindow && Date.now() - menuPressAt < 1500 && canTap()) {
+        menuPressAt = 0;
+        const r = playerFrame.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+        const x = r.left + playerFrame.clientLeft + Number(hm.x), y = r.top + playerFrame.clientTop + Number(hm.y);
+        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+          try { window.vsApp.postMessage('tap:' + Math.round(x * dpr) + ',' + Math.round(y * dpr)); } catch {}
+        }
       }
       return;
     }
@@ -2006,6 +2020,7 @@
       return;
     }
     if (hm && typeof hm === 'object' && hm.vsHook === 'dbltap' && HOOK && hm.token === HOOK.token) {
+      if (playerMenu) return;
       youMovedIt();
       doubleTap(typeof hm.side === 'number' ? hm.side : Math.sign(hm.secs || 0));
       return;
@@ -3707,9 +3722,11 @@
   // OK on the video (TV)
   // ── TV: the player's own buttons (subtitles, settings, speed, quality) ──
   // In fullscreen, ▲ or ▼ hands the remote to the player's buttons (the app's helper puts a
-  // yellow frame on one): arrows move, OK presses, Back finishes. Stops by itself after
+  // white frame on one): arrows move, OK presses, Back finishes. Stops by itself after
   // 30 seconds of not pressing anything, or when you leave fullscreen.
-  var playerMenu = false, playerMenuIdle = null, playerMenuWait = null, menuHintTimer = null;
+  var playerMenu = false, playerMenuIdle = null, playerMenuWait = null, menuHintTimer = null, menuPressAt = 0;
+  // The app can make a real tap on the screen (players ignore made-up clicks)
+  const canTap = () => !!(window.vsApp && typeof window.vsApp.postMessage === 'function');
   const menuHint = document.getElementById('menuHint');
   function showMenuHint(text, ms) {
     menuHint.textContent = text;
@@ -3726,7 +3743,7 @@
     playerMenu = true;
     bumpPlayerMenu();
     showMenuHint("Finding the player's buttons…", 2500);
-    hookSend('menuStart');
+    hookSend('menuStart', { realTap: canTap() });
     clearTimeout(playerMenuWait);
     playerMenuWait = setTimeout(() => {          // nothing answered
       if (!playerMenu) return;
@@ -3745,13 +3762,14 @@
   function playerMenuAnswer(state) {
     if (!playerMenu) return;
     clearTimeout(playerMenuWait);
+    if (state === 'fullscreen') { endPlayerMenu(); exitAllFullscreen(); return; }   // its own fullscreen button
     if (state === 'on') showMenuHint('Player buttons: arrows move · OK presses · Back when done', 5000);
     else { endPlayerMenu(); showMenuHint("This player has no buttons the remote can reach. Try another source"); }
   }
 
   function tvPlayerOk() {
     if (!current) return;
-    if (playerMenu) { bumpPlayerMenu(); hookSend('menuPress'); return; }
+    if (playerMenu) { bumpPlayerMenu(); menuPressAt = Date.now(); hookSend('menuPress'); return; }
     if (skipBtn.classList.contains('visible')) { skipBtn.click(); return; }
     if (upNextEl.classList.contains('visible')) { goNext(true); return; }
     if (!inAnyFullscreen()) { toggleFullscreen(); return; }       // OK = go fullscreen first
