@@ -541,6 +541,7 @@
     scroll-snap-type: x proximity; padding: 4px 2px 8px; scrollbar-width: none;
   }
   .row-track::-webkit-scrollbar { display: none; }
+  body.tv .row-track { scroll-snap-type: none; }
   .tile {
     flex: none; width: 7.4rem; background: none; border: none; padding: 0; cursor: pointer;
     color: var(--text); text-align: left; font-family: inherit; scroll-snap-align: start; border-radius: 6px;
@@ -713,6 +714,13 @@
   .jump-bubble.right { right: 8%; }
   .jump-bubble.center { left: 50%; transform: translate(-50%, -50%); }
   .jump-bubble.show { opacity: 1; }
+  /* TV: what the remote does while you're using the player's own buttons */
+  .menu-hint {
+    position: absolute; top: 1rem; left: 50%; transform: translateX(-50%); z-index: 6; pointer-events: none;
+    background: rgba(0, 0, 0, 0.75); color: #fff; border-radius: 999px; padding: 0.5rem 1.1rem;
+    font-size: 0.95rem; white-space: nowrap; opacity: 0; transition: opacity 0.25s;
+  }
+  .menu-hint.show { opacity: 1; }
 
   /* ── TV layout (Fire Stick) ────────────────────── */
   /* Bigger text, a highlight on whatever the remote is pointing at, and Continue
@@ -725,9 +733,11 @@
   /* TV, while a video is open: just the player and its buttons, sized to fit the screen,
      so moving the highlight never scrolls the page (a Fire Stick blanks a video that's
      partly scrolled off the screen). Back takes you home to search. */
-  body.tv.watching h1, body.tv.watching .subtitle, body.tv.watching .search-row,
+  body.tv.watching .subtitle, body.tv.watching .search-row,
   body.tv.watching #status, body.tv.watching #syncBox, body.tv.watching .profile-chip { display: none; }
   body.tv.watching { padding-top: 0.8rem; padding-bottom: 0.4rem; }
+  /* …but the logo stays, small, above the video: ▲ to it and OK = home */
+  body.tv.watching h1 { font-size: 1.6rem; margin-bottom: 0.5rem; align-self: flex-start; }
   body.tv.watching .player-frame:not(.tv-full) { margin-left: auto; margin-right: auto; }
   .tv-panel { display: none; }
   body.tv .tv-panel {
@@ -740,7 +750,10 @@
   body.tv .tv-panel .stream-btn { flex: 1; }
   body.tv .tv-empty { color: var(--muted); font-size: 0.85rem; }
   body.tv :focus { outline: 3px solid #fff !important; outline-offset: 3px; }
-  body.tv .player-frame:focus { outline-offset: 2px; overflow: visible; }
+  /* A Fire Stick shows a black picture when the video is clipped to rounded corners,
+     so on TV the player box never clips (whether or not it's highlighted) */
+  body.tv .player-frame { border-radius: 0; overflow: visible; }
+  body.tv .player-frame:focus { outline-offset: 2px; }
   body.tv .result-card:focus-within { border-color: var(--text); }
 
   /* While something is playing, shrink the big title so search + video fit on screen */
@@ -800,6 +813,7 @@
     <!-- Skip intro / recap: appears during the intro when the timestamps are known -->
     <button id="skipBtn" class="skip-btn">Skip intro</button>
     <div id="jumpBubble" class="jump-bubble"></div>
+    <div id="menuHint" class="menu-hint"></div>
   </div>
   <div class="now-playing">
     <div id="npTitle"></div>
@@ -1727,6 +1741,7 @@
     lastPos = Math.floor(info.startAt || 0);
     lastPosAt = Date.now();
     isPlaying = false;
+    if (typeof endPlayerMenu === 'function') endPlayerMenu();
     clearTimeout(fixBackTimer); fixBackTimer = null;
     if (fixBackFor !== epKey(info)) { fixBackFor = epKey(info); fixBackTries = 0; }
     loadSkips(info);
@@ -1927,6 +1942,10 @@
         adReloadAt = Date.now();
         play({ ...current, startAt: resumeHere(), autoplay: true });
       }
+      return;
+    }
+    if (hm && typeof hm === 'object' && hm.vsHook === 'menu' && HOOK && hm.token === HOOK.token) {
+      playerMenuAnswer(hm.state);
       return;
     }
     if (hm && typeof hm === 'object' && hm.vsHook === 'key' && HOOK && hm.token === HOOK.token) {
@@ -2177,6 +2196,7 @@
 
   // On a TV: stretch the player over the screen instead of Android's fullscreen
   function setTvFull(on) {
+    if (!on) endPlayerMenu();
     frameWrap.classList.toggle('tv-full', on);
     document.body.classList.toggle('tv-full-on', on);
     fitTvPlayer();
@@ -3498,16 +3518,32 @@
     return items.filter(el => navVisible(el) && !el.classList.contains('row-btn'));
   }
 
+  // Pressing quickly or holding a button: jump straight there rather than gliding, so
+  // one glide doesn't get interrupted by the next (that was the jitter)
+  let lastNavAt = 0;
   function navFocus(el) {
+    const now = Date.now(), quick = now - lastNavAt < 350;
+    lastNavAt = now;
+    const how = quick ? 'auto' : 'smooth';
     try { el.focus({ preventScroll: true }); } catch { el.focus(); }
     const r = el.getBoundingClientRect();
-    if (r.top < 70 || r.bottom > innerHeight - 50) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    // In a row of posters: slide the row along so the highlighted one is in view
+    if (r.top < 70 || r.bottom > innerHeight - 50) el.scrollIntoView({ block: 'center', behavior: how });
+    // In a row of posters: slide the row along so the highlighted one is in view. Worked
+    // out from where the row is heading (not where it is mid-glide), so it never overshoots.
     const track = el.closest && el.closest('.row-track');
     if (track) {
       const tr = track.getBoundingClientRect();
-      if (r.left < tr.left + 4) track.scrollBy({ left: r.left - tr.left - 40, behavior: 'smooth' });
-      else if (r.right > tr.right - 4) track.scrollBy({ left: r.right - tr.right + 40, behavior: 'smooth' });
+      const left = r.left - tr.left + track.scrollLeft, right = left + r.width;   // place in the row
+      const gliding = track._goal != null && now - track._goalAt < 600;
+      const view = gliding ? track._goal : track.scrollLeft;
+      let goal = null;
+      if (left < view + 4) goal = left - 40;
+      else if (right > view + track.clientWidth - 4) goal = right - track.clientWidth + 40;
+      if (goal != null) {
+        goal = Math.max(0, Math.min(goal, track.scrollWidth - track.clientWidth));
+        track._goal = goal; track._goalAt = now;
+        track.scrollTo({ left: goal, behavior: how });
+      }
     }
   }
 
@@ -3622,8 +3658,53 @@
   }
 
   // OK on the video (TV)
+  // ── TV: the player's own buttons (subtitles, settings, speed, quality) ──
+  // In fullscreen, ▲ or ▼ hands the remote to the player's buttons (the app's helper puts a
+  // yellow frame on one): arrows move, OK presses, Back finishes. Stops by itself after
+  // 30 seconds of not pressing anything, or when you leave fullscreen.
+  var playerMenu = false, playerMenuIdle = null, playerMenuWait = null, menuHintTimer = null;
+  const menuHint = document.getElementById('menuHint');
+  function showMenuHint(text, ms) {
+    menuHint.textContent = text;
+    menuHint.classList.add('show');
+    clearTimeout(menuHintTimer);
+    menuHintTimer = setTimeout(() => menuHint.classList.remove('show'), ms || 3500);
+  }
+  function bumpPlayerMenu() {
+    clearTimeout(playerMenuIdle);
+    playerMenuIdle = setTimeout(() => endPlayerMenu(), 30000);
+  }
+  function startPlayerMenu() {
+    if (!current || !HOOK || !hookEnabled()) { showMenuHint("The player's buttons only work in the app"); return; }
+    playerMenu = true;
+    bumpPlayerMenu();
+    showMenuHint("Finding the player's buttons…", 2500);
+    hookSend('menuStart');
+    clearTimeout(playerMenuWait);
+    playerMenuWait = setTimeout(() => {          // nothing answered
+      if (!playerMenu) return;
+      endPlayerMenu();
+      showMenuHint("Couldn't reach this player's buttons. Try another source");
+    }, 2500);
+  }
+  function endPlayerMenu() {
+    if (!playerMenu) return;
+    playerMenu = false;
+    clearTimeout(playerMenuIdle);
+    clearTimeout(playerMenuWait);
+    hookSend('menuEnd');
+    menuHint.classList.remove('show');
+  }
+  function playerMenuAnswer(state) {
+    if (!playerMenu) return;
+    clearTimeout(playerMenuWait);
+    if (state === 'on') showMenuHint('Player buttons: arrows move · OK presses · Back when done', 5000);
+    else { endPlayerMenu(); showMenuHint("This player has no buttons the remote can reach. Try another source"); }
+  }
+
   function tvPlayerOk() {
     if (!current) return;
+    if (playerMenu) { bumpPlayerMenu(); hookSend('menuPress'); return; }
     if (skipBtn.classList.contains('visible')) { skipBtn.click(); return; }
     if (upNextEl.classList.contains('visible')) { goNext(true); return; }
     if (!inAnyFullscreen()) { toggleFullscreen(); return; }       // OK = go fullscreen first
@@ -3636,8 +3717,11 @@
     const dir = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' }[key];
     const t = document.activeElement;
     const stop = () => { if (e) { e.preventDefault(); e.stopPropagation(); } };
+    if (playerMenu && (key === 'Escape' || key === 'GoBack' || key === 'BrowserBack')) { stop(); endPlayerMenu(); return; }
     if ((key === 'Enter' || key === ' ') && t === frameWrap) { stop(); tvPlayerOk(); return; }
     if (!dir) return;
+    if (playerMenu && current) { stop(); bumpPlayerMenu(); hookSend('menuMove', { dir }); return; }
+    if (t === frameWrap && inAnyFullscreen() && (dir === 'up' || dir === 'down')) { stop(); startPlayerMenu(); return; }
     if (t === frameWrap && (dir === 'left' || dir === 'right')) { stop(); jumpBy(dir === 'left' ? -10 : 10); return; }
     // Typing: ◀ ▶ move along the text until you reach the end of it
     if (t && t.tagName === 'INPUT' && (dir === 'left' || dir === 'right')) {
@@ -4181,6 +4265,7 @@
   // Android app Back button: close the editor / profile screen first
   // Order: TV fullscreen, then the profile editor / screen, then the show page
   window.vsBack = function () {
+    if (playerMenu) { endPlayerMenu(); return 'handled'; }
     if (frameWrap.classList.contains('tv-full')) { exitAllFullscreen(); return 'handled'; }
     if (whoEl.classList.contains('editing')) { closeEditor(); return 'handled'; }
     if (whoEl.classList.contains('open')) {
