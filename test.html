@@ -339,6 +339,14 @@
     text-transform: uppercase;
     letter-spacing: 0.1em;
   }
+  /* Shuffle / Original order, next to the My List heading */
+  .list-order { display: inline-flex; gap: 0.4rem; margin-left: 0.7rem; vertical-align: middle; }
+  .list-order button {
+    font: inherit; font-size: 0.7rem; letter-spacing: 0.05em; text-transform: none;
+    padding: 0.15rem 0.6rem; border-radius: 999px; cursor: pointer;
+    background: transparent; color: var(--muted); border: 1px solid #444;
+  }
+  .list-order button:hover, .list-order button:focus-visible { color: #fff; border-color: #888; }
 
   .remove-btn {
     background: transparent;
@@ -2741,11 +2749,45 @@
     return items;
   }
 
-  function renderMyListRow() {
+  // Shuffle: a random order for My List, only until the page/app is next opened, so the
+  // usual order (newest added first) is always what you start with.
+  let listShuffle = null;   // title → its random place, while shuffled
+  function renderMyListRow(fromStart) {
     const old = document.getElementById('rowMyList');
-    const items = myListItems();
+    let items = myListItems();
     if (!items.length) { if (old) old.remove(); return; }
+    if (listShuffle) {
+      const place = it => {
+        const k = listKey(it.isMovie, it.id);
+        if (!(k in listShuffle)) listShuffle[k] = Math.random();
+        return listShuffle[k];
+      };
+      items = items.slice().sort((a, b) => place(a) - place(b));
+    }
     const sec = makeRow('My List', items, 'rowMyList');
+    // Shuffle buttons (only worth having with a few titles on the list)
+    if (items.length > 3) {
+      const box = document.createElement('span');
+      box.className = 'list-order';
+      const addBtn = (text, label, fn) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.textContent = text; b.setAttribute('aria-label', label);
+        b.addEventListener('click', () => {
+          fn();
+          renderMyListRow(true);
+          const again = document.querySelector('#rowMyList .list-order button');
+          if (again && document.activeElement === document.body) { try { again.focus({ preventScroll: true }); } catch { again.focus(); } }
+        });
+        box.appendChild(b);
+      };
+      if (!listShuffle) {
+        addBtn('🔀 Shuffle', 'Shuffle My List', () => { listShuffle = {}; });
+      } else {
+        addBtn('🔀 Shuffle again', 'Shuffle My List again', () => { listShuffle = {}; });
+        addBtn('↺ Original order', 'Put My List back in its usual order', () => { listShuffle = null; });
+      }
+      sec.querySelector('.section-label').appendChild(box);
+    }
     // A ✕ on each poster takes it off the list (same as the My List button on its page)
     sec.querySelectorAll('.row-track .tile').forEach((tile, i) => {
       const x = document.createElement('span');
@@ -2762,7 +2804,7 @@
       tile.appendChild(x);
     });
     // Keep the row where it was scrolled to when it's redrawn
-    const was = old && old.querySelector('.row-track');
+    const was = !fromStart && old && old.querySelector('.row-track');
     if (was) { const left = was.scrollLeft; requestAnimationFrame(() => { sec.querySelector('.row-track').scrollLeft = left; }); }
     if (old) old.replaceWith(sec); else homeEl.prepend(sec);
   }
