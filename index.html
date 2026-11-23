@@ -1930,7 +1930,13 @@
       hookSend('fsAck');
       // Pressed the player's own fullscreen button with the remote: that means "leave"
       if (playerMenu) { endPlayerMenu(); exitAllFullscreen(); return; }
-      if (inAnyFullscreen()) { exitAllFullscreen(); return; }
+      // Some players (VidNest) ask for fullscreen by themselves, e.g. when the screen turns
+      // or the floating window grows back. That's not you pressing their fullscreen button,
+      // so it must never take you *out* of fullscreen, and never does anything in or just
+      // after the floating window.
+      const youPressed = Date.now() - lastPlayerTap < 1500;
+      if (pipMode || Date.now() - pipEndedAt < 3000) return;
+      if (inAnyFullscreen()) { if (youPressed) exitAllFullscreen(); return; }
       if (isTvLayout()) { setTvFull(true); return; }
       frameWrap.requestFullscreen()
         .then(() => { try { return screen.orientation.lock('landscape'); } catch {} })
@@ -1980,6 +1986,7 @@
     }
     if (hm && typeof hm === 'object' && hm.vsHook === 'hello' && HOOK && hm.token === HOOK.token) {
       if (!hookSeen) { hookSeen = true; renderHookBtn(); }
+      if (pipMode) hookSend('pip', { on: true });   // a player that's just loaded in the floating window
       return;
     }
     if (hm && typeof hm === 'object' && hm.vsHook === 'state' && HOOK && hm.token === HOOK.token) {
@@ -2186,6 +2193,17 @@
   // purpose (✕, Back, the fullscreen button), go straight back in.
   var lastPlayerTap = 0, fsLeaveAt = 0, inOurFs = false;
   var adReloadAt = 0;
+  // The app's floating window (picture-in-picture): the app tells us when it opens/closes.
+  // While it's open the player's own buttons and bars are hidden, so you just see the video.
+  var pipMode = false, pipEndedAt = 0;
+  window.vsPipMode = function (on) {
+    on = !!on;
+    if (pipMode && !on) pipEndedAt = Date.now();
+    pipMode = on;
+    hookSend('pip', { on });
+    if (on) [800, 2500].forEach(ms => setTimeout(() => { if (pipMode) hookSend('pip', { on: true }); }, ms));
+    return 'ok';
+  };
   document.addEventListener('fullscreenchange', () => {
     const was = inOurFs;
     inOurFs = document.fullscreenElement === frameWrap;
