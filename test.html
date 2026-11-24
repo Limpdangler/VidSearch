@@ -2012,6 +2012,16 @@
       return;
     }
     if (hm && typeof hm === 'object' && hm.vsHook === 'menu' && HOOK && hm.token === HOOK.token) {
+      if (hm.state === 'scrub' && playerMenu) {
+        // Moving along the progress bar with ◀ ▶: show where you've got to
+        youMovedIt();
+        bumpPlayerMenu();
+        const p = Math.max(0, Number(hm.pos) || 0), d = Number(hm.dur) || 0;
+        lastPos = p; lastPosAt = Date.now();
+        const mmss = x => { x = Math.floor(x); const h = Math.floor(x / 3600), m = Math.floor(x / 60) % 60, s2 = x % 60;
+                            return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s2).padStart(2, '0'); };
+        showMenuHint(mmss(p) + (d ? ' / ' + mmss(d) : ''), 1500);
+      }
       playerMenuAnswer(hm.state);
       return;
     }
@@ -3781,6 +3791,7 @@
     if (!playerMenu) return;
     clearTimeout(playerMenuWait);
     if (state === 'fullscreen') { endPlayerMenu(); exitAllFullscreen(); return; }   // its own fullscreen button
+    if (state === 'scrub') return;
     if (state === 'on') showMenuHint('Player buttons: arrows move · OK presses · Back when done', 5000);
     else { endPlayerMenu(); showMenuHint("This player has no buttons the remote can reach. Try another source"); }
   }
@@ -3803,7 +3814,7 @@
     if (playerMenu && (key === 'Escape' || key === 'GoBack' || key === 'BrowserBack')) { stop(); endPlayerMenu(); return; }
     if ((key === 'Enter' || key === ' ') && t === frameWrap) { stop(); tvPlayerOk(); return; }
     if (!dir) return;
-    if (playerMenu && current) { stop(); bumpPlayerMenu(); hookSend('menuMove', { dir }); return; }
+    if (playerMenu && current) { stop(); bumpPlayerMenu(); youMovedIt(); hookSend('menuMove', { dir }); return; }
     if (t === frameWrap && inAnyFullscreen() && (dir === 'up' || dir === 'down')) { stop(); startPlayerMenu(); return; }
     if (t === frameWrap && (dir === 'left' || dir === 'right')) { stop(); jumpBy(dir === 'left' ? -10 : 10); return; }
     // Typing: ◀ ▶ move along the text until you reach the end of it

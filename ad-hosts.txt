@@ -1,0 +1,4 @@
+# Extra ad sites for the Vid Search app to block, one per line.
+# The app checks this file each time it opens, on top of the list built into it.
+# Blocking a site also blocks everything under it (ads.example.com blocks x.ads.example.com).
+# Lines starting with # are notes and are ignored.
