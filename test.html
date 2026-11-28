@@ -154,6 +154,8 @@
   }
   select:focus { border-color: var(--accent); }
   select option { background: var(--surface2); }
+  /* The one you're on stands out in the list */
+  select option:checked { background: var(--accent); color: #fff; font-weight: 700; }
 
   .ep-jump {
     display: flex;
@@ -202,7 +204,7 @@
 
 
   #fsBtn, #reloadBtn { display: flex; align-items: center; justify-content: center; }
-  #fsBtn svg, #reloadBtn svg { width: 1.1rem; height: 1.1rem; }
+  #fsBtn svg, #reloadBtn svg, #epsBtn svg { width: 1.1rem; height: 1.1rem; }
 
   /* The small icon buttons (reload, fullscreen, close) stay compact so all five fit on a phone */
   .player-bar .ctrl-btn.ghost { flex: 0 0 2.9rem; padding: 0; display: flex; align-items: center; justify-content: center; }
@@ -230,6 +232,13 @@
 
   /* Prev and Next share the width equally; the ✕ stays small */
   #prevBtn, #nextBtn { flex: 1; }
+  /* Narrow phones: everything on one row (Prev/Next give up a little padding) */
+  @media (max-width: 480px) {
+    .player-bar { gap: 0.4rem; }
+    .player-bar .ctrl-btn { padding-left: 0.4rem; padding-right: 0.4rem; min-width: 0; }
+    #prevBtn, #nextBtn { font-size: 1rem; letter-spacing: 0.04em; }
+    .player-bar .ctrl-btn.ghost { flex: 0 0 2.5rem; }
+  }
 
   #npTitle {
     font-weight: 500;
@@ -620,6 +629,8 @@
   .d-seasons { display: flex; gap: 0.4rem; flex-wrap: wrap; }
   .d-season.on { border-color: var(--accent); color: var(--accent); }
   .d-eps { display: flex; flex-direction: column; gap: 0.5rem; }
+  .ep.ep-now { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+  .ep-now-tag { color: var(--accent); font-weight: 700; }
   .ep {
     display: flex; gap: 0.8rem; align-items: flex-start; width: 100%; padding: 0.5rem; cursor: pointer;
     background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
@@ -835,6 +846,9 @@
   <div class="player-bar">
     <button id="prevBtn" class="ctrl-btn">‹ Prev</button>
     <button id="nextBtn" class="ctrl-btn">Next ›</button>
+    <button id="epsBtn" class="ctrl-btn ghost hidden" title="All episodes" aria-label="All episodes">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1.2" fill="currentColor"/><circle cx="4.5" cy="12" r="1.2" fill="currentColor"/><circle cx="4.5" cy="18" r="1.2" fill="currentColor"/></svg>
+    </button>
     <button id="reloadBtn" class="ctrl-btn ghost" title="Reload the player (fixes a black or frozen video)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>
     </button>
@@ -1408,6 +1422,7 @@
   const playerFrame = document.getElementById('playerFrame');
   const prevBtn     = document.getElementById('prevBtn');
   const nextBtn     = document.getElementById('nextBtn');
+  const epsBtn      = document.getElementById('epsBtn');
   const closeBtn    = document.getElementById('closeBtn');  const npTitle     = document.getElementById('npTitle');
   const npEp        = document.getElementById('npEp');
   const sourceBtns  = document.getElementById('sourceBtns');
@@ -1893,12 +1908,14 @@
     if (!current || current.isMovie) {
       prevBtn.classList.add('hidden');
       nextBtn.classList.add('hidden');
+      epsBtn.classList.add('hidden');
       epJump.classList.add('hidden');
       fitTvPlayer();
       return;
     }
     prevBtn.classList.remove('hidden');
     nextBtn.classList.remove('hidden');
+    epsBtn.classList.remove('hidden');
     epJump.classList.remove('hidden');
     fitTvPlayer();
 
@@ -1922,7 +1939,9 @@
     const count = s ? s.count : 0;
     let html = selectedEp ? '' : '<option value="" selected disabled>Pick an episode</option>';
     for (let i = 1; i <= count; i++) {
-      html += `<option value="${i}"${i === selectedEp ? ' selected' : ''}>Episode ${i}</option>`;
+      // ▶ marks the episode that's playing (easy to spot in the list)
+      const now = current && !current.isMovie && current.season === seasonNum && current.episode === i;
+      html += `<option value="${i}"${i === selectedEp ? ' selected' : ''}>${now ? '▶ ' : ''}Episode ${i}</option>`;
     }
     jumpEpisode.innerHTML = html;
   }
@@ -1931,7 +1950,7 @@
   function fillEpisodeJump(seasons, season, episode) {
     jumpSeasons = seasons;
     jumpSeason.innerHTML = seasons.map(s =>
-      `<option value="${s.n}"${s.n === season ? ' selected' : ''}>Season ${s.n}</option>`
+      `<option value="${s.n}"${s.n === season ? ' selected' : ''}>${s.n === season ? '▶ ' : ''}Season ${s.n}</option>`
     ).join('');
     fillEpisodes(season, episode);
   }
@@ -2396,6 +2415,18 @@
 
   prevBtn.addEventListener('click', () => step(-1));
   nextBtn.addEventListener('click', () => step(1));
+  // ☰ = the show's page with all its episodes (opens on the season you're watching).
+  // The video pauses while you look (where the player allows it) and carries on if you
+  // close the page without picking anything; picking an episode plays it.
+  var pausedForList = null, scrollToNow = false;
+  epsBtn.addEventListener('click', () => {
+    if (!current || current.isMovie) return;
+    const src = SOURCES[current.sourceKey || getSourceKey()];
+    pausedForList = null;
+    if (isPlaying && src && canControl(src)) { ctlPause(src); pausedForList = current; }
+    scrollToNow = true;
+    openDetails(current.tmdbId, false);
+  });
   document.getElementById('fsBtn').addEventListener('click', toggleFullscreen);
 
   // Fire TV remote (the app passes these on): ≡ = fullscreen on/off.
@@ -2967,6 +2998,12 @@
   const seasonCache = {};
 
   function closeDetails(backToWhereYouWere) {
+    // Closed the episode list without picking one: carry on watching
+    if (pausedForList && pausedForList === current) {
+      const src = SOURCES[current.sourceKey || getSourceKey()];
+      if (src) ctlPlay(src);
+    }
+    pausedForList = null;
     detailsReq++;
     detailsStack = [];
     detailsEl.classList.remove('open');
@@ -3052,6 +3089,7 @@
 
   async function playFrom(it, imdbId, season, episode) {
     if (!imdbId) { detailsMsgInline("This one can't be played: it has no IMDb ID."); return; }
+    pausedForList = null;          // picking something to play: don't carry on the old one
     closeDetails(false);
     await openStream({ id: it.id, poster_path: it.poster }, it.isMovie, season, episode, it.title, imdbId);
   }
@@ -3280,8 +3318,23 @@
               ${sub ? `<span class="ep-sub">${esc(sub)}</span>` : ''}
               ${e.overview ? `<span class="ep-desc">${esc(e.overview)}</span>` : ''}
             </span>`;
-          b.addEventListener('click', () => playFrom(it, imdbId, n, e.episode_number));
+          // The episode that's playing right now stands out (and the list scrolls to it
+          // when you open it from the ☰ button)
+          const nowPlaying = current && !current.isMovie && current.tmdbId === id &&
+                             current.season === n && current.episode === e.episode_number;
+          if (nowPlaying) {
+            b.classList.add('ep-now');
+            b.querySelector('.ep-name').insertAdjacentHTML('afterbegin', '<span class="ep-now-tag">▶ Playing</span> ');
+          }
+          b.addEventListener('click', () => {
+            if (nowPlaying) { pausedForList = current; closeDetails(); return; }   // just carry on
+            playFrom(it, imdbId, n, e.episode_number);
+          });
           epsEl.appendChild(b);
+          if (nowPlaying && scrollToNow) {
+            scrollToNow = false;
+            requestAnimationFrame(() => b.scrollIntoView({ block: 'center' }));
+          }
         });
         if (!epsEl.children.length) epsEl.innerHTML = '<div class="d-msg">No episodes listed for this season.</div>';
       };

@@ -1,5 +1,5 @@
 // Vid Search player helper.
-// vs-hook version: 2026112402
+// vs-hook version: 2026112801
 //   (The app uses whichever copy has the highest version: the one built into the app, or
 //   the one on the website. Raise this number every time the file changes.)
 // The app adds this to every page and every box (iframe) inside it, before the
@@ -229,7 +229,7 @@
   // by their wording and removed as soon as they appear, whether they're drawn over the
   // player or sent in a box of their own. Real checks (Cloudflare's "Just a moment…",
   // Google and hCaptcha) are left alone, as players sometimes need to pass those.
-  var BAIT = /not a robot|are you (a )?(robot|human)|prove (that )?you|verify (that )?you('| a)re|you('| a)re (a )?human|(scan|scanning) (the |this )?qr|qr[ -]?code/i;
+  var BAIT = /not a robot|are you (a )?(robot|human)|prove (that )?you|verify (that )?you('| a)re|verify (you|yourself)\b|human verification|you('| a)re (a )?human|(scan|scanning) (the |this |with |your )?(qr|phone|camera)|qr[ -]?code/i;
   var REAL_CHECK_HOST = /(^|\.)(cloudflare\.com|google\.com|gstatic\.com|recaptcha\.net|hcaptcha\.com)$/i;
   var sweepTimer = null;
   // Gambling / "you've won" ad pages (treasure chests, prize wheels). These words can
@@ -249,7 +249,8 @@
   // before anything that also holds the video (so only the scam goes, never the player)
   function overlayRoot(el) {
     var root = null;
-    for (var n = el; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+    for (var n = el; n && n !== document.body && n !== document.documentElement;
+         n = n.parentElement || (n.parentNode && n.parentNode.host)) {      // (also out of hidden sections)
       if (n.querySelector && n.querySelector('video, iframe')) break;
       try {
         var pos = getComputedStyle(n).position;
@@ -257,6 +258,65 @@
       } catch (e) {}
     }
     return root;
+  }
+  // A QR code picture (scam screens want you to scan one with your phone)
+  var QR = /(^|[^a-z])qr([^a-z]|$)|qrcode|qr-code|qrserver|create-qr/i;
+  function qrPicture(el) {
+    var what = (el.getAttribute('src') || '') + ' ' + (el.getAttribute('alt') || '') + ' ' +
+               (el.id || '') + ' ' + (typeof el.className === 'string' ? el.className :
+               (el.className && el.className.baseVal) || '');
+    return QR.test(what);
+  }
+  // Everywhere text and pictures can hide: the page and any hidden sections inside it
+  function allRoots() {
+    var roots = [document];
+    findAll(document, '*', []).forEach(function (el) { if (el.shadowRoot) roots.push(el.shadowRoot); });
+    return roots;
+  }
+  // Things marking a scam screen: its words, words in labels and picture descriptions,
+  // and QR code pictures
+  function baitMarks() {
+    var marks = [];
+    allRoots().forEach(function (root) {
+      var start = root === document ? document.body : root;
+      if (!start) return;
+      var walker = document.createTreeWalker(start, NodeFilter.SHOW_TEXT, null), node;
+      while ((node = walker.nextNode())) {
+        if (!BAIT.test(node.data)) continue;
+        var el = node.parentElement;
+        if (el && !el.closest('script, style')) marks.push(el);
+      }
+      try {
+        var tagged = root.querySelectorAll('[alt], [title], [aria-label], img, canvas, svg');
+        for (var i = 0; i < tagged.length; i++) {
+          var t = tagged[i];
+          var words = (t.getAttribute('alt') || '') + ' ' + (t.getAttribute('title') || '') + ' ' + (t.getAttribute('aria-label') || '');
+          if (BAIT.test(words) || (/^(img|canvas|svg)$/i.test(t.tagName) && qrPicture(t))) marks.push(t);
+        }
+      } catch (e) {}
+    });
+    return marks;
+  }
+  // After a scam box is removed, the dark see-through layer behind it (if it had one)
+  // goes too, so it can't keep blocking the screen
+  function removeBackdrops(parent) {
+    if (!parent || !parent.children) return;
+    var W = window.innerWidth, H = window.innerHeight;
+    for (var i = parent.children.length - 1; i >= 0; i--) {
+      var c = parent.children[i];
+      try {
+        var cs = getComputedStyle(c);
+        if (cs.position !== 'fixed' && cs.position !== 'absolute') continue;
+        if (c.querySelector('video, iframe') || /^(video|iframe)$/i.test(c.tagName)) continue;
+        if ((c.textContent || '').trim().length > 20) continue;
+        // a dimming layer: you can see it (see-through layers that catch taps aren't touched)
+        var a = /rgba?\(([^)]+)\)/.exec(cs.backgroundColor || '');
+        var alpha = a ? (a[1].split(',')[3] !== undefined ? parseFloat(a[1].split(',')[3]) : 1) : 0;
+        if (alpha < 0.15 && (!cs.backdropFilter || cs.backdropFilter === 'none')) continue;
+        var r = c.getBoundingClientRect();
+        if (r.width * r.height >= W * H * 0.5) c.remove();
+      } catch (e) {}
+    }
   }
   function sweepBait() {
     sweepTimer = null;
@@ -266,18 +326,18 @@
       try { window.parent.postMessage({ vsHookAd: 'remove', token: TOKEN }, '*'); } catch (e) {}
       return;
     }
-    var text = document.body.textContent || '';
-    if (!BAIT.test(text)) return;
-    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
-    var node, removed = false, pageWide = false;
-    while ((node = walker.nextNode())) {
-      if (!BAIT.test(node.data)) continue;
-      var el = node.parentElement;
-      if (!el || el.closest('script, style')) continue;
+    var marks = baitMarks();
+    if (!marks.length) return;
+    var removed = false, pageWide = false;
+    for (var i = 0; i < marks.length; i++) {
+      var el = marks[i];
+      if (!el.isConnected) continue;
       var root = overlayRoot(el);
       if (root) {
+        var parent = root.parentNode;
         try { root.remove(); removed = true; } catch (e) {}
-      } else if (!el.closest('video') ) {
+        removeBackdrops(parent);
+      } else if (!el.closest('video')) {
         pageWide = true;
       }
     }
@@ -287,7 +347,7 @@
       try { window.parent.postMessage({ vsHookAd: 'remove', token: TOKEN }, '*'); } catch (e) {}
     }
   }
-  function sweepSoon() { if (!sweepTimer) sweepTimer = setTimeout(sweepBait, 150); }
+  function sweepSoon() { if (!sweepTimer) sweepTimer = setTimeout(sweepBait, 400); }
   try {
     // (watch the document itself: at this early point the page's <html> may not exist yet)
     new MutationObserver(sweepSoon).observe(document, { childList: true, subtree: true, characterData: true });
